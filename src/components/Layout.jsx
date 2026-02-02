@@ -9,7 +9,7 @@ import {
   Mail,
   Building2,
   Menu,
-  X
+  FileImage
 } from 'lucide-react'
 import { useState } from 'react'
 
@@ -24,6 +24,7 @@ const navigation = [
 const quickActions = [
   { name: 'Quick Bid Entry', href: '/bids/quick-entry', icon: Zap },
   { name: 'Parse Bid Email', href: '/email-parser', icon: Mail },
+  { name: 'Analyze Drawings', href: '/drawing-analysis', icon: FileImage },
 ]
 
 export default function Layout() {
@@ -77,7 +78,7 @@ export default function Layout() {
 
             <div className="mt-6 px-3">
               <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-                Quick Actions
+                AI Tools
               </div>
               <div className="space-y-1">
                 {quickActions.map((item) => (
