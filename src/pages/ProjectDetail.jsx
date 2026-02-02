@@ -611,16 +611,13 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
         }
       }
 
-      // Send emails if enabled
+      // Send emails if enabled - one email per sub with ALL selected items
       if (sendEmails) {
         for (const sub of selectedSubsData) {
-          if (!sub.email) continue
-
-          const subItems = selectedItemsData.filter(item =>
-            sub.trades?.some(({ trade }) => trade.id === item.trade?.id)
-          )
-
-          if (subItems.length === 0) continue
+          if (!sub?.email) {
+            console.log(`Skipping ${sub?.company_name} - no email`)
+            continue
+          }
 
           try {
             const response = await fetch('/api/send-bid-invitation', {
@@ -629,22 +626,26 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
               body: JSON.stringify({
                 to_email: sub.email,
                 to_name: sub.contact_name || sub.company_name,
-                company_name: sub.company_name,
+                subject: `Invitation to Bid: ${project?.name}`,
                 project_name: project?.name,
                 project_location: project?.location,
                 bid_due_date: project?.bid_date,
-                bid_items: subItems.map(item => ({
-                  trade: item.trade?.name,
-                  description: item.description,
-                  quantity: item.quantity,
-                  unit: item.unit
+                bid_items: selectedItemsData.map(item => ({
+                  trade: item?.trade?.name || 'General',
+                  description: item?.description || '',
+                  quantity: item?.quantity || '',
+                  unit: item?.unit || ''
                 })),
-                from_company: 'Clipper Construction'
+                sender_company: 'Clipper Construction'
               })
             })
 
+            const result = await response.json()
             if (response.ok) {
               emailsSent++
+            } else {
+              console.error(`Email failed for ${sub.email}:`, result.error)
+              toast.error(`Failed to email ${sub.company_name}: ${result.error}`)
             }
           } catch (err) {
             console.error('Error sending email to', sub.email, err)

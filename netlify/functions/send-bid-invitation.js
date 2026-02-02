@@ -28,9 +28,29 @@ This disclaimer shall be incorporated by reference into any resulting subcontrac
 `.trim()
 
 export async function handler(event) {
+  const headers = {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*'
+  }
+
+  // Health check endpoint
+  if (event.httpMethod === 'GET') {
+    return {
+      statusCode: 200,
+      headers,
+      body: JSON.stringify({
+        status: 'ok',
+        hasApiKey: !!process.env.SENDGRID_API_KEY,
+        hasFromEmail: !!process.env.SENDGRID_FROM_EMAIL,
+        fromEmail: process.env.SENDGRID_FROM_EMAIL ? '***configured***' : 'NOT SET'
+      })
+    }
+  }
+
   if (event.httpMethod !== 'POST') {
     return {
       statusCode: 405,
+      headers,
       body: JSON.stringify({ error: 'Method not allowed' })
     }
   }
@@ -39,7 +59,8 @@ export async function handler(event) {
   if (!apiKey) {
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: 'SendGrid API key not configured' })
+      headers,
+      body: JSON.stringify({ error: 'SendGrid API key not configured. Add SENDGRID_API_KEY to Netlify environment variables.' })
     }
   }
 
