@@ -43,12 +43,19 @@ export default function DrawingAnalysis() {
 
   async function handleFileUpload(e) {
     const files = Array.from(e.target.files)
+
+    // Only accept image files - Claude Vision doesn't support PDFs
     const validFiles = files.filter(file =>
-      file.type.startsWith('image/') || file.type === 'application/pdf'
+      ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(file.type)
     )
 
     if (validFiles.length !== files.length) {
-      toast.error('Some files were skipped. Only images and PDFs are supported.')
+      const skipped = files.length - validFiles.length
+      toast.error(`${skipped} file(s) skipped. Only JPG, PNG, GIF, and WebP images are supported. PDFs must be converted to images first.`)
+    }
+
+    if (validFiles.length === 0) {
+      return
     }
 
     // Convert files to base64 (up to 30 pages for Clipper Construction jobs)
@@ -277,13 +284,14 @@ export default function DrawingAnalysis() {
                   id="file-upload"
                   type="file"
                   multiple
-                  accept="image/*,.pdf"
+                  accept="image/jpeg,image/png,image/gif,image/webp"
                   className="hidden"
                   onChange={handleFileUpload}
                 />
                 <Upload className="h-12 w-12 mx-auto mb-3 text-gray-400" />
                 <p className="text-gray-600 mb-1">Click to upload or drag and drop</p>
-                <p className="text-sm text-gray-500">PNG, JPG, or PDF (max 30 pages)</p>
+                <p className="text-sm text-gray-500">JPG, PNG, GIF, or WebP images (max 30 pages)</p>
+                <p className="text-xs text-gray-400 mt-1">PDFs must be converted to images first</p>
               </div>
             </div>
 
