@@ -22,5 +22,9 @@
 [functions]
   node_bundler = "esbuild"
 
+# Extended timeout for AI drawing analysis (requires Netlify Pro for >10s)
+[functions."analyze-drawings"]
+  external_node_modules = ["@anthropic-ai/sdk"]
+
 [context.production.environment]
   NODE_VERSION = "18"
