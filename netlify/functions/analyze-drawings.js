@@ -100,50 +100,32 @@ async function analyzeBatch(anthropic, images, batchNumber, totalBatches, projec
     }
   })
 
-  const systemPrompt = `You are an expert construction estimator and quantity surveyor. Your task is to analyze construction drawings and extract a comprehensive list of bid items organized by CSI MasterFormat trade divisions.
-
-For each item you identify, provide:
-1. The appropriate CSI division code and trade name
-2. A clear description of the work item
-3. Estimated quantity if discernible (with units like SF, LF, EA, CY, etc.)
-4. Any special notes or considerations
-
-Be thorough and identify ALL visible scope items. Consider:
-- Structural elements (foundations, framing, steel)
-- Architectural elements (walls, ceilings, finishes, doors, windows)
-- MEP systems (plumbing, HVAC, electrical if visible)
-- Site work and exterior elements
-- Specialties and equipment
-
-Always organize by trade/division for easy bid solicitation.`
+  const systemPrompt = `You are an expert construction estimator. Analyze construction drawings and extract bid items by CSI MasterFormat divisions. Be concise.`
 
   const batchInfo = totalBatches > 1
-    ? `\n\nThis is batch ${batchNumber} of ${totalBatches} from the drawing set. Focus on extracting items visible in these specific sheets.`
+    ? `\n\nBatch ${batchNumber} of ${totalBatches}.`
     : ''
 
-  const userPrompt = `Analyze these construction drawings${projectName ? ` for "${projectName}"` : ''}${drawingType ? ` (${drawingType} drawings)` : ''} and generate a comprehensive list of bid items organized by CSI trade division.
+  const userPrompt = `Analyze this construction drawing${projectName ? ` for "${projectName}"` : ''}${drawingType ? ` (${drawingType})` : ''} and list bid items by trade.
 ${batchInfo}
-${additionalContext ? `\nAdditional context: ${additionalContext}` : ''}
+${additionalContext ? `Context: ${additionalContext}` : ''}
 
-Return your analysis as a JSON object with this exact structure:
+Return JSON only:
 {
-  "drawing_summary": "Brief description of what these specific sheets show",
-  "sheets_analyzed": ["List of sheet numbers/names if visible"],
+  "drawing_summary": "Brief description",
+  "sheets_analyzed": ["Sheet names"],
   "bid_items": [
     {
       "division_code": "XX",
       "trade_name": "Trade Name",
-      "item_number": "XX-001",
-      "description": "Detailed description of the work item",
-      "quantity": "Estimated quantity or 'TBD'",
-      "unit": "Unit of measure (SF, LF, EA, LS, etc.)",
-      "notes": "Any special considerations, alternates, or clarifications"
+      "description": "Work item description",
+      "quantity": "Qty or TBD",
+      "unit": "SF/LF/EA/LS",
+      "notes": "Special notes"
     }
   ],
-  "items_to_verify": ["Items that need field verification or clarification"]
-}
-
-Be comprehensive - it's better to include more items that can be combined later than to miss scope.`
+  "items_to_verify": ["Items needing verification"]
+}`
 
   console.log(`Batch ${batchNumber}: Calling Claude API...`)
   const startTime = Date.now()
@@ -152,7 +134,7 @@ Be comprehensive - it's better to include more items that can be combined later 
   try {
     message = await anthropic.messages.create({
       model: CLAUDE_MODEL,
-      max_tokens: 4096,
+      max_tokens: 2048,
       messages: [
         {
           role: 'user',
