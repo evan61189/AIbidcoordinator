@@ -55,7 +55,7 @@ async function analyzeBatch(anthropic, images, batchNumber, totalBatches, projec
 
   const imageContents = images.map((img, idx) => {
     // Extract base64 data, handling various formats
-    let base64Data = img.data
+    let base64Data = img.data || ''
     let mediaType = img.media_type || 'image/png'
 
     // Remove data URI prefix if present
@@ -65,7 +65,17 @@ async function analyzeBatch(anthropic, images, batchNumber, totalBatches, projec
       base64Data = dataUriMatch[2]
     }
 
-    console.log(`Image ${idx + 1}: type=${mediaType}, size=${base64Data.length} chars`)
+    // Validate media type - Claude only supports these formats
+    const supportedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+    if (!supportedTypes.includes(mediaType)) {
+      console.warn(`Image ${idx + 1}: Unsupported type ${mediaType}, defaulting to image/png`)
+      mediaType = 'image/png'
+    }
+
+    // Log image details for debugging
+    const sizeKB = Math.round(base64Data.length * 0.75 / 1024)
+    console.log(`Image ${idx + 1}: type=${mediaType}, base64 chars=${base64Data.length}, ~${sizeKB}KB`)
+    console.log(`Image ${idx + 1}: first 50 chars of data: ${base64Data.substring(0, 50)}...`)
 
     return {
       type: 'image',
@@ -143,6 +153,10 @@ Be comprehensive - it's better to include more items that can be combined later 
     })
   } catch (apiError) {
     console.error(`Batch ${batchNumber}: Claude API error:`, apiError.message)
+    console.error(`Batch ${batchNumber}: Full error:`, JSON.stringify(apiError, null, 2))
+    if (apiError.error) {
+      console.error(`Batch ${batchNumber}: Error details:`, JSON.stringify(apiError.error, null, 2))
+    }
     throw apiError
   }
 
@@ -381,9 +395,16 @@ export async function handler(event) {
 
   } catch (error) {
     console.error('Error analyzing drawings:', error)
+    console.error('Error name:', error.name)
+    console.error('Error message:', error.message)
+    console.error('Error status:', error.status)
+    if (error.error) {
+      console.error('API error details:', JSON.stringify(error.error, null, 2))
+    }
 
     // Provide more specific error messages
     let errorMessage = 'Failed to analyze drawings'
+    let errorDetails = error.message
     let statusCode = 500
 
     if (error.status === 401) {
@@ -393,7 +414,8 @@ export async function handler(event) {
       errorMessage = 'Rate limit exceeded. Please wait and try again.'
       statusCode = 429
     } else if (error.status === 400) {
-      errorMessage = 'Invalid request to AI service. Image format may be unsupported.'
+      errorMessage = 'Invalid request to AI service.'
+      errorDetails = error.error?.message || error.message || 'Image format may be unsupported. Use PNG, JPG, GIF, or WebP.'
       statusCode = 400
     } else if (error.message?.includes('Could not process image')) {
       errorMessage = 'Unable to process one or more images. Please ensure images are clear and in a supported format (PNG, JPG).'
@@ -404,7 +426,7 @@ export async function handler(event) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         error: errorMessage,
-        details: error.message
+        details: errorDetails
       })
     }
   }
