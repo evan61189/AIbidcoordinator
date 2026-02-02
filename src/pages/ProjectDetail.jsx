@@ -629,7 +629,7 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
               body: JSON.stringify({
                 to_email: sub.email,
                 to_name: sub.contact_name || sub.company_name,
-                company_name: sub.company_name,
+                subject: `Invitation to Bid: ${project?.name}`,
                 project_name: project?.name,
                 project_location: project?.location,
                 bid_due_date: project?.bid_date,
@@ -639,12 +639,15 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
                   quantity: item.quantity,
                   unit: item.unit
                 })),
-                from_company: 'Clipper Construction'
+                sender_company: 'Clipper Construction'
               })
             })
 
+            const result = await response.json()
             if (response.ok) {
               emailsSent++
+            } else {
+              console.error('Email send failed:', result.error)
             }
           } catch (err) {
             console.error('Error sending email to', sub.email, err)
