@@ -611,36 +611,15 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
         }
       }
 
-      // Send emails if enabled
+      // Send emails if enabled - one email per sub with ALL selected items
       if (sendEmails) {
-        console.log('Starting email send process...')
-        console.log('Selected subs data:', selectedSubsData.map(s => ({
-          name: s.company_name,
-          email: s.email,
-          trades: s.trades?.map(t => t.trade?.name)
-        })))
-
         for (const sub of selectedSubsData) {
-          console.log(`Processing sub: ${sub.company_name}, email: ${sub.email}`)
-
-          if (!sub.email) {
-            console.log(`Skipping ${sub.company_name} - no email`)
-            continue
-          }
-
-          const subItems = selectedItemsData.filter(item =>
-            sub.trades?.some(({ trade }) => trade.id === item.trade?.id)
-          )
-
-          console.log(`${sub.company_name} matched ${subItems.length} items`)
-
-          if (subItems.length === 0) {
-            console.log(`Skipping ${sub.company_name} - no matching trade items`)
+          if (!sub?.email) {
+            console.log(`Skipping ${sub?.company_name} - no email`)
             continue
           }
 
           try {
-            console.log(`Sending email to ${sub.email}...`)
             const response = await fetch('/api/send-bid-invitation', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -651,23 +630,22 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
                 project_name: project?.name,
                 project_location: project?.location,
                 bid_due_date: project?.bid_date,
-                bid_items: subItems.map(item => ({
-                  trade: item.trade?.name,
-                  description: item.description,
-                  quantity: item.quantity,
-                  unit: item.unit
+                bid_items: selectedItemsData.map(item => ({
+                  trade: item?.trade?.name || 'General',
+                  description: item?.description || '',
+                  quantity: item?.quantity || '',
+                  unit: item?.unit || ''
                 })),
                 sender_company: 'Clipper Construction'
               })
             })
 
             const result = await response.json()
-            console.log(`Email response for ${sub.email}:`, response.status, result)
-
             if (response.ok) {
               emailsSent++
             } else {
-              console.error('Email send failed:', result.error)
+              console.error(`Email failed for ${sub.email}:`, result.error)
+              toast.error(`Failed to email ${sub.company_name}: ${result.error}`)
             }
           } catch (err) {
             console.error('Error sending email to', sub.email, err)
