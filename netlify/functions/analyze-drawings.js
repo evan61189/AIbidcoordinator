@@ -7,6 +7,11 @@
 
 import Anthropic from '@anthropic-ai/sdk'
 
+// Netlify function configuration - extend timeout for AI processing
+export const config = {
+  maxDuration: 60 // 60 seconds timeout (requires Netlify Pro for >26s)
+}
+
 // Maximum images per batch (Claude works best with ~10 images at a time)
 const BATCH_SIZE = 10
 const MAX_IMAGES = 30
@@ -216,9 +221,20 @@ function mergeBatchResults(batchResults) {
 }
 
 export async function handler(event) {
+  // Set CORS and content-type headers for all responses
+  const headers = {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*'
+  }
+
+  if (event.httpMethod === 'OPTIONS') {
+    return { statusCode: 204, headers }
+  }
+
   if (event.httpMethod !== 'POST') {
     return {
       statusCode: 405,
+      headers,
       body: JSON.stringify({ error: 'Method not allowed' })
     }
   }
@@ -226,18 +242,40 @@ export async function handler(event) {
   if (!process.env.ANTHROPIC_API_KEY) {
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: 'Anthropic API key not configured' })
+      headers,
+      body: JSON.stringify({ error: 'Anthropic API key not configured. Add ANTHROPIC_API_KEY to Netlify environment variables.' })
+    }
+  }
+
+  let parsedBody
+  try {
+    parsedBody = JSON.parse(event.body)
+  } catch (parseError) {
+    return {
+      statusCode: 400,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        error: 'Invalid request body. Could not parse JSON.',
+        details: 'Request may be too large or malformed.'
+      })
     }
   }
 
   try {
-    const { images, project_name, drawing_type, additional_context } = JSON.parse(event.body)
+    const { images, project_name, drawing_type, additional_context } = parsedBody
 
     if (!images || !Array.isArray(images) || images.length === 0) {
       return {
         statusCode: 400,
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ error: 'At least one image is required. Send base64 encoded images.' })
       }
+    }
+
+    // Check payload size - warn if images might be too large
+    const totalSize = images.reduce((acc, img) => acc + (img.data?.length || 0), 0)
+    if (totalSize > 5000000) { // ~5MB warning threshold
+      console.warn(`Large payload: ${(totalSize / 1000000).toFixed(2)}MB`)
     }
 
     // Initialize Anthropic client inside handler to ensure API key is available
@@ -318,6 +356,7 @@ export async function handler(event) {
 
     return {
       statusCode,
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         error: errorMessage,
         details: error.message
