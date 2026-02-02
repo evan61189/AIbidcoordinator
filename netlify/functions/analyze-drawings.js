@@ -175,17 +175,48 @@ Be comprehensive - it's better to include more items that can be combined later 
 
   const elapsed = Date.now() - startTime
   console.log(`Batch ${batchNumber}: Claude responded in ${elapsed}ms`)
+  console.log(`Batch ${batchNumber}: Response length: ${message.content[0].text.length} chars`)
+  console.log(`Batch ${batchNumber}: Stop reason: ${message.stop_reason}`)
 
   const responseText = message.content[0].text
 
+  // Log first 500 chars for debugging
+  console.log(`Batch ${batchNumber}: Response preview: ${responseText.substring(0, 500)}...`)
+
   // Try to parse JSON from response
   try {
-    const jsonMatch = responseText.match(/\{[\s\S]*\}/)
-    if (jsonMatch) {
-      return JSON.parse(jsonMatch[0])
+    // First try: look for JSON code block
+    const codeBlockMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)```/)
+    if (codeBlockMatch) {
+      const jsonStr = codeBlockMatch[1].trim()
+      console.log(`Batch ${batchNumber}: Found JSON in code block`)
+      return JSON.parse(jsonStr)
+    }
+
+    // Second try: find JSON object - use a more careful approach
+    const jsonStart = responseText.indexOf('{')
+    if (jsonStart !== -1) {
+      // Find matching closing brace by counting braces
+      let braceCount = 0
+      let jsonEnd = -1
+      for (let i = jsonStart; i < responseText.length; i++) {
+        if (responseText[i] === '{') braceCount++
+        if (responseText[i] === '}') braceCount--
+        if (braceCount === 0) {
+          jsonEnd = i + 1
+          break
+        }
+      }
+
+      if (jsonEnd > jsonStart) {
+        const jsonStr = responseText.substring(jsonStart, jsonEnd)
+        console.log(`Batch ${batchNumber}: Extracted JSON of ${jsonStr.length} chars`)
+        return JSON.parse(jsonStr)
+      }
     }
   } catch (parseError) {
-    console.error('JSON parse error in batch:', parseError)
+    console.error(`Batch ${batchNumber}: JSON parse error:`, parseError.message)
+    console.error(`Batch ${batchNumber}: Response text (first 1000 chars):`, responseText.substring(0, 1000))
   }
 
   return {
