@@ -9,11 +9,11 @@ import Anthropic from '@anthropic-ai/sdk'
 
 // Netlify function configuration - extend timeout for AI processing
 export const config = {
-  maxDuration: 60 // 60 seconds timeout (requires Netlify Pro for >26s)
+  maxDuration: 300 // 5 minutes for Netlify Pro
 }
 
-// Image limits for Netlify Pro (extended timeout)
-const BATCH_SIZE = 5
+// Process one image at a time to avoid timeouts
+const BATCH_SIZE = 1
 const MAX_IMAGES = 30
 
 // Use Claude 3.5 Sonnet for best accuracy with construction drawings
@@ -51,14 +51,54 @@ const CSI_DIVISIONS = {
  * Analyze a batch of images with Claude
  */
 async function analyzeBatch(anthropic, images, batchNumber, totalBatches, projectName, drawingType, additionalContext) {
-  const imageContents = images.map(img => ({
-    type: 'image',
-    source: {
-      type: 'base64',
-      media_type: img.media_type || 'image/png',
-      data: img.data.replace(/^data:image\/\w+;base64,/, '')
+  console.log(`Batch ${batchNumber}: Processing ${images.length} image(s)`)
+
+  const fileContents = images.map((img, idx) => {
+    // Extract base64 data, handling various formats
+    let base64Data = img.data || ''
+    let mediaType = img.media_type || 'image/png'
+
+    // Remove data URI prefix if present
+    const dataUriMatch = base64Data.match(/^data:([^;]+);base64,(.+)$/)
+    if (dataUriMatch) {
+      mediaType = dataUriMatch[1]
+      base64Data = dataUriMatch[2]
     }
-  }))
+
+    // Log file details for debugging
+    const sizeKB = Math.round(base64Data.length * 0.75 / 1024)
+    console.log(`File ${idx + 1}: type=${mediaType}, base64 chars=${base64Data.length}, ~${sizeKB}KB`)
+
+    // Handle PDFs as documents, images as images
+    if (mediaType === 'application/pdf') {
+      console.log(`File ${idx + 1}: Sending as PDF document`)
+      return {
+        type: 'document',
+        source: {
+          type: 'base64',
+          media_type: 'application/pdf',
+          data: base64Data
+        }
+      }
+    }
+
+    // Validate image media type
+    const supportedImageTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+    if (!supportedImageTypes.includes(mediaType)) {
+      console.warn(`File ${idx + 1}: Unsupported type ${mediaType}, defaulting to image/png`)
+      mediaType = 'image/png'
+    }
+
+    console.log(`File ${idx + 1}: Sending as image`)
+    return {
+      type: 'image',
+      source: {
+        type: 'base64',
+        media_type: mediaType,
+        data: base64Data
+      }
+    }
+  })
 
   const systemPrompt = `You are an expert construction estimator and quantity surveyor. Your task is to analyze construction drawings and extract a comprehensive list of bid items organized by CSI MasterFormat trade divisions.
 
@@ -105,20 +145,36 @@ Return your analysis as a JSON object with this exact structure:
 
 Be comprehensive - it's better to include more items that can be combined later than to miss scope.`
 
-  const message = await anthropic.messages.create({
-    model: CLAUDE_MODEL,
-    max_tokens: 4096,
-    messages: [
-      {
-        role: 'user',
-        content: [
-          ...imageContents,
-          { type: 'text', text: userPrompt }
-        ]
-      }
-    ],
-    system: systemPrompt
-  })
+  console.log(`Batch ${batchNumber}: Calling Claude API...`)
+  const startTime = Date.now()
+
+  let message
+  try {
+    message = await anthropic.messages.create({
+      model: CLAUDE_MODEL,
+      max_tokens: 4096,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            ...fileContents,
+            { type: 'text', text: userPrompt }
+          ]
+        }
+      ],
+      system: systemPrompt
+    })
+  } catch (apiError) {
+    console.error(`Batch ${batchNumber}: Claude API error:`, apiError.message)
+    console.error(`Batch ${batchNumber}: Full error:`, JSON.stringify(apiError, null, 2))
+    if (apiError.error) {
+      console.error(`Batch ${batchNumber}: Error details:`, JSON.stringify(apiError.error, null, 2))
+    }
+    throw apiError
+  }
+
+  const elapsed = Date.now() - startTime
+  console.log(`Batch ${batchNumber}: Claude responded in ${elapsed}ms`)
 
   const responseText = message.content[0].text
 
@@ -231,6 +287,22 @@ export async function handler(event) {
     return { statusCode: 204, headers }
   }
 
+  // GET request - return status/health check
+  if (event.httpMethod === 'GET') {
+    const hasApiKey = !!process.env.ANTHROPIC_API_KEY
+    return {
+      statusCode: 200,
+      headers,
+      body: JSON.stringify({
+        status: 'ok',
+        hasApiKey,
+        model: CLAUDE_MODEL,
+        maxImages: MAX_IMAGES,
+        batchSize: BATCH_SIZE
+      })
+    }
+  }
+
   if (event.httpMethod !== 'POST') {
     return {
       statusCode: 405,
@@ -336,9 +408,16 @@ export async function handler(event) {
 
   } catch (error) {
     console.error('Error analyzing drawings:', error)
+    console.error('Error name:', error.name)
+    console.error('Error message:', error.message)
+    console.error('Error status:', error.status)
+    if (error.error) {
+      console.error('API error details:', JSON.stringify(error.error, null, 2))
+    }
 
     // Provide more specific error messages
     let errorMessage = 'Failed to analyze drawings'
+    let errorDetails = error.message
     let statusCode = 500
 
     if (error.status === 401) {
@@ -348,7 +427,8 @@ export async function handler(event) {
       errorMessage = 'Rate limit exceeded. Please wait and try again.'
       statusCode = 429
     } else if (error.status === 400) {
-      errorMessage = 'Invalid request to AI service. Image format may be unsupported.'
+      errorMessage = 'Invalid request to AI service.'
+      errorDetails = error.error?.message || error.message || 'Image format may be unsupported. Use PNG, JPG, GIF, or WebP.'
       statusCode = 400
     } else if (error.message?.includes('Could not process image')) {
       errorMessage = 'Unable to process one or more images. Please ensure images are clear and in a supported format (PNG, JPG).'
@@ -359,7 +439,7 @@ export async function handler(event) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         error: errorMessage,
-        details: error.message
+        details: errorDetails
       })
     }
   }
