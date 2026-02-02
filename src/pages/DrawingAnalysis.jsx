@@ -23,6 +23,7 @@ export default function DrawingAnalysis() {
   const [uploadedImages, setUploadedImages] = useState([])
   const [analysisResult, setAnalysisResult] = useState(null)
   const [selectedItems, setSelectedItems] = useState([])
+  const [analysisProgress, setAnalysisProgress] = useState({ current: 0, total: 0 })
 
   useEffect(() => {
     loadData()
@@ -98,40 +99,96 @@ export default function DrawingAnalysis() {
     }
 
     setAnalyzing(true)
+    setAnalysisProgress({ current: 0, total: uploadedImages.length })
+
+    const allBidItems = []
+    const allSheetsAnalyzed = []
+    const allItemsToVerify = []
+    const summaries = []
+    let failedCount = 0
+
     try {
-      const response = await fetch('/api/analyze-drawings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          images: uploadedImages.map(img => ({
-            data: img.data,
-            media_type: img.type
-          })),
-          project_name: projects.find(p => p.id === selectedProject)?.name,
-          drawing_type: drawingType,
-          additional_context: additionalContext
-        })
-      })
+      // Process each file sequentially to avoid gateway timeout
+      for (let i = 0; i < uploadedImages.length; i++) {
+        const img = uploadedImages[i]
+        setAnalysisProgress({ current: i + 1, total: uploadedImages.length })
 
-      const data = await response.json()
+        try {
+          const response = await fetch('/api/analyze-drawings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              images: [{
+                data: img.data,
+                media_type: img.type
+              }],
+              project_name: projects.find(p => p.id === selectedProject)?.name,
+              drawing_type: drawingType,
+              additional_context: additionalContext
+            })
+          })
 
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to analyze drawings')
+          const data = await response.json()
+
+          if (!response.ok) {
+            console.error(`Failed to analyze ${img.name}:`, data.error)
+            failedCount++
+            continue
+          }
+
+          // Merge results
+          if (data.analysis) {
+            if (data.analysis.bid_items) {
+              allBidItems.push(...data.analysis.bid_items)
+            }
+            if (data.analysis.sheets_analyzed) {
+              allSheetsAnalyzed.push(...data.analysis.sheets_analyzed)
+            }
+            if (data.analysis.items_to_verify) {
+              allItemsToVerify.push(...data.analysis.items_to_verify)
+            }
+            if (data.analysis.drawing_summary) {
+              summaries.push(data.analysis.drawing_summary)
+            }
+          }
+
+          toast.success(`Analyzed ${img.name} (${i + 1}/${uploadedImages.length})`)
+        } catch (fileError) {
+          console.error(`Error analyzing ${img.name}:`, fileError)
+          failedCount++
+        }
       }
-      setAnalysisResult(data.analysis)
+
+      if (allBidItems.length === 0 && failedCount === uploadedImages.length) {
+        throw new Error('Failed to analyze all drawings. Please try again.')
+      }
+
+      // Combine all results
+      const mergedResult = {
+        drawing_summary: summaries.join(' | '),
+        sheets_analyzed: [...new Set(allSheetsAnalyzed)],
+        bid_items: allBidItems,
+        items_to_verify: [...new Set(allItemsToVerify)]
+      }
+
+      setAnalysisResult(mergedResult)
 
       // Pre-select all items
-      if (data.analysis?.bid_items) {
-        setSelectedItems(data.analysis.bid_items.map((_, i) => i))
+      if (mergedResult.bid_items) {
+        setSelectedItems(mergedResult.bid_items.map((_, i) => i))
       }
 
       setStep(2)
-      toast.success(`Identified ${data.analysis?.bid_items?.length || 0} bid items`)
+      const successMsg = failedCount > 0
+        ? `Identified ${allBidItems.length} bid items (${failedCount} file(s) failed)`
+        : `Identified ${allBidItems.length} bid items from ${uploadedImages.length} drawing(s)`
+      toast.success(successMsg)
     } catch (error) {
       console.error('Error analyzing drawings:', error)
       toast.error(error.message || 'Failed to analyze drawings. Please try again.')
     } finally {
       setAnalyzing(false)
+      setAnalysisProgress({ current: 0, total: 0 })
     }
   }
 
@@ -336,7 +393,9 @@ export default function DrawingAnalysis() {
                 {analyzing ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Analyzing Drawings{uploadedImages.length > 10 ? ` (${Math.ceil(uploadedImages.length / 10)} batches)` : ''}...
+                    {analysisProgress.total > 1
+                      ? `Analyzing ${analysisProgress.current}/${analysisProgress.total}...`
+                      : 'Analyzing...'}
                   </>
                 ) : (
                   <>
