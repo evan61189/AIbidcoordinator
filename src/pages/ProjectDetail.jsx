@@ -613,16 +613,34 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
 
       // Send emails if enabled
       if (sendEmails) {
+        console.log('Starting email send process...')
+        console.log('Selected subs data:', selectedSubsData.map(s => ({
+          name: s.company_name,
+          email: s.email,
+          trades: s.trades?.map(t => t.trade?.name)
+        })))
+
         for (const sub of selectedSubsData) {
-          if (!sub.email) continue
+          console.log(`Processing sub: ${sub.company_name}, email: ${sub.email}`)
+
+          if (!sub.email) {
+            console.log(`Skipping ${sub.company_name} - no email`)
+            continue
+          }
 
           const subItems = selectedItemsData.filter(item =>
             sub.trades?.some(({ trade }) => trade.id === item.trade?.id)
           )
 
-          if (subItems.length === 0) continue
+          console.log(`${sub.company_name} matched ${subItems.length} items`)
+
+          if (subItems.length === 0) {
+            console.log(`Skipping ${sub.company_name} - no matching trade items`)
+            continue
+          }
 
           try {
+            console.log(`Sending email to ${sub.email}...`)
             const response = await fetch('/api/send-bid-invitation', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -644,6 +662,8 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
             })
 
             const result = await response.json()
+            console.log(`Email response for ${sub.email}:`, response.status, result)
+
             if (response.ok) {
               emailsSent++
             } else {
