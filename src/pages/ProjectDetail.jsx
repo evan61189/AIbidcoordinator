@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import {
   ArrowLeft, Edit, Plus, FileText, Users, DollarSign,
-  Calendar, MapPin, Building2, Download, ChevronDown, ChevronRight, Trash2
+  Calendar, MapPin, Building2, Download, ChevronDown, ChevronRight, Trash2,
+  Search, Mail, Check, X
 } from 'lucide-react'
 import { fetchProject, fetchTrades, createBidItem, fetchSubcontractors, createBid } from '../lib/supabase'
 import { format } from 'date-fns'
@@ -340,6 +341,7 @@ export default function ProjectDetail() {
       {showInviteModal && (
         <InviteSubsModal
           projectId={id}
+          project={project}
           bidItems={project.bid_items || []}
           subcontractors={subcontractors}
           onClose={() => setShowInviteModal(false)}
@@ -510,10 +512,72 @@ function AddBidItemModal({ projectId, trades, bidDate, onClose, onSuccess }) {
   )
 }
 
-function InviteSubsModal({ projectId, bidItems, subcontractors, onClose, onSuccess }) {
+function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose, onSuccess }) {
+  const [step, setStep] = useState(1) // 1: Search & Select Items, 2: Select Subs, 3: Review & Send
+  const [searchQuery, setSearchQuery] = useState('')
   const [selectedItems, setSelectedItems] = useState([])
   const [selectedSubs, setSelectedSubs] = useState([])
   const [loading, setLoading] = useState(false)
+  const [sendEmails, setSendEmails] = useState(true)
+
+  // Filter bid items by search query
+  const filteredItems = bidItems.filter(item => {
+    if (!searchQuery.trim()) return true
+    const query = searchQuery.toLowerCase()
+    return (
+      item.description?.toLowerCase().includes(query) ||
+      item.trade?.name?.toLowerCase().includes(query) ||
+      item.item_number?.toLowerCase().includes(query) ||
+      item.scope_details?.toLowerCase().includes(query)
+    )
+  })
+
+  // Group filtered items by trade
+  const itemsByTrade = filteredItems.reduce((acc, item) => {
+    const tradeId = item.trade?.id || 'unknown'
+    if (!acc[tradeId]) {
+      acc[tradeId] = { trade: item.trade, items: [] }
+    }
+    acc[tradeId].items.push(item)
+    return acc
+  }, {})
+
+  // Get relevant subcontractors based on selected items' trades
+  const selectedTradeIds = [...new Set(
+    selectedItems.map(id => bidItems.find(item => item.id === id)?.trade?.id).filter(Boolean)
+  )]
+
+  const relevantSubs = subcontractors.filter(sub =>
+    sub.trades?.some(({ trade }) => selectedTradeIds.includes(trade.id))
+  )
+
+  // Group subcontractors by their trades
+  const subsByTrade = relevantSubs.reduce((acc, sub) => {
+    sub.trades?.forEach(({ trade }) => {
+      if (selectedTradeIds.includes(trade.id)) {
+        if (!acc[trade.id]) {
+          acc[trade.id] = { trade, subs: [] }
+        }
+        if (!acc[trade.id].subs.find(s => s.id === sub.id)) {
+          acc[trade.id].subs.push(sub)
+        }
+      }
+    })
+    return acc
+  }, {})
+
+  function selectAllFiltered() {
+    const filteredIds = filteredItems.map(item => item.id)
+    setSelectedItems(prev => [...new Set([...prev, ...filteredIds])])
+  }
+
+  function clearSelection() {
+    setSelectedItems([])
+  }
+
+  function selectAllSubs() {
+    setSelectedSubs(relevantSubs.map(sub => sub.id))
+  }
 
   async function handleInvite() {
     if (selectedItems.length === 0 || selectedSubs.length === 0) {
@@ -522,20 +586,76 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, onClose, onSucce
     }
 
     setLoading(true)
+    let successCount = 0
+    let emailsSent = 0
+
     try {
+      // Get selected items and subs data
+      const selectedItemsData = selectedItems.map(id => bidItems.find(item => item.id === id))
+      const selectedSubsData = selectedSubs.map(id => subcontractors.find(sub => sub.id === id))
+
       // Create bid invitations
       for (const itemId of selectedItems) {
         for (const subId of selectedSubs) {
-          await createBid({
-            bid_item_id: itemId,
-            subcontractor_id: subId,
-            status: 'invited',
-            invitation_sent_at: new Date().toISOString()
-          })
+          try {
+            await createBid({
+              bid_item_id: itemId,
+              subcontractor_id: subId,
+              status: 'invited',
+              invitation_sent_at: new Date().toISOString()
+            })
+            successCount++
+          } catch (err) {
+            console.error('Error creating bid:', err)
+          }
         }
       }
 
-      toast.success(`${selectedItems.length * selectedSubs.length} invitation(s) created`)
+      // Send emails if enabled
+      if (sendEmails) {
+        for (const sub of selectedSubsData) {
+          if (!sub.email) continue
+
+          const subItems = selectedItemsData.filter(item =>
+            sub.trades?.some(({ trade }) => trade.id === item.trade?.id)
+          )
+
+          if (subItems.length === 0) continue
+
+          try {
+            const response = await fetch('/api/send-bid-invitation', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                to_email: sub.email,
+                to_name: sub.contact_name || sub.company_name,
+                company_name: sub.company_name,
+                project_name: project?.name,
+                project_location: project?.location,
+                bid_due_date: project?.bid_date,
+                bid_items: subItems.map(item => ({
+                  trade: item.trade?.name,
+                  description: item.description,
+                  quantity: item.quantity,
+                  unit: item.unit
+                })),
+                from_company: 'Clipper Construction'
+              })
+            })
+
+            if (response.ok) {
+              emailsSent++
+            }
+          } catch (err) {
+            console.error('Error sending email to', sub.email, err)
+          }
+        }
+      }
+
+      const msg = sendEmails
+        ? `Created ${successCount} invitation(s), sent ${emailsSent} email(s)`
+        : `Created ${successCount} invitation(s)`
+      toast.success(msg)
       onSuccess()
     } catch (error) {
       console.error('Error creating invitations:', error)
@@ -545,108 +665,326 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, onClose, onSucce
     }
   }
 
-  // Group subcontractors by their trades
-  const subsByTrade = subcontractors.reduce((acc, sub) => {
-    sub.trades?.forEach(({ trade }) => {
-      if (!acc[trade.id]) {
-        acc[trade.id] = { trade, subs: [] }
-      }
-      acc[trade.id].subs.push(sub)
-    })
-    return acc
-  }, {})
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl mx-4 max-h-[80vh] overflow-hidden flex flex-col">
-        <div className="p-4 border-b border-gray-200">
-          <h2 className="text-lg font-semibold">Invite Subcontractors to Bid</h2>
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl mx-4 max-h-[85vh] overflow-hidden flex flex-col">
+        {/* Header */}
+        <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold">Invite Subcontractors to Bid</h2>
+            <p className="text-sm text-gray-500">
+              {step === 1 && 'Step 1: Search and select bid items'}
+              {step === 2 && 'Step 2: Select subcontractors'}
+              {step === 3 && 'Step 3: Review and send'}
+            </p>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg">
+            <X className="h-5 w-5 text-gray-500" />
+          </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {/* Select Bid Items */}
-          <div>
-            <h3 className="font-medium text-gray-900 mb-2">Select Bid Items</h3>
-            <div className="border rounded-lg max-h-40 overflow-y-auto">
-              {bidItems.length > 0 ? (
-                bidItems.map(item => (
-                  <label key={item.id} className="flex items-center gap-3 p-3 hover:bg-gray-50 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={selectedItems.includes(item.id)}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          setSelectedItems([...selectedItems, item.id])
-                        } else {
-                          setSelectedItems(selectedItems.filter(id => id !== item.id))
-                        }
-                      }}
-                      className="rounded border-gray-300"
-                    />
-                    <div>
-                      <span className="font-medium">{item.trade?.name}</span>
-                      <span className="text-gray-500"> - {item.description}</span>
-                    </div>
-                  </label>
-                ))
-              ) : (
-                <p className="p-3 text-gray-500">No bid items. Add items first.</p>
-              )}
+        {/* Step 1: Search & Select Items */}
+        {step === 1 && (
+          <>
+            <div className="p-4 border-b border-gray-200">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search bid items by keyword (e.g., concrete, electrical, drywall...)"
+                  className="input pl-10"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  autoFocus
+                />
+              </div>
+              <div className="flex items-center gap-2 mt-3">
+                <button
+                  onClick={selectAllFiltered}
+                  className="text-sm text-primary-600 hover:text-primary-700"
+                >
+                  Select all {filteredItems.length} matching
+                </button>
+                <span className="text-gray-300">|</span>
+                <button
+                  onClick={clearSelection}
+                  className="text-sm text-gray-600 hover:text-gray-700"
+                >
+                  Clear selection
+                </button>
+                <span className="ml-auto text-sm text-gray-500">
+                  {selectedItems.length} selected
+                </span>
+              </div>
             </div>
-          </div>
 
-          {/* Select Subcontractors */}
-          <div>
-            <h3 className="font-medium text-gray-900 mb-2">Select Subcontractors</h3>
-            <div className="border rounded-lg max-h-60 overflow-y-auto">
-              {Object.values(subsByTrade).length > 0 ? (
-                Object.values(subsByTrade).map(({ trade, subs }) => (
-                  <div key={trade.id}>
-                    <div className="px-3 py-2 bg-gray-50 font-medium text-sm text-gray-700">
-                      {trade.division_code} - {trade.name}
+            <div className="flex-1 overflow-y-auto p-4">
+              {Object.keys(itemsByTrade).length > 0 ? (
+                Object.values(itemsByTrade).map(({ trade, items }) => (
+                  <div key={trade?.id || 'unknown'} className="mb-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="font-medium text-gray-900">
+                        {trade ? `Div ${trade.division_code}: ${trade.name}` : 'Unknown Trade'}
+                      </span>
+                      <span className="text-sm text-gray-500">({items.length})</span>
+                      <button
+                        onClick={() => {
+                          const tradeItemIds = items.map(i => i.id)
+                          const allSelected = tradeItemIds.every(id => selectedItems.includes(id))
+                          if (allSelected) {
+                            setSelectedItems(prev => prev.filter(id => !tradeItemIds.includes(id)))
+                          } else {
+                            setSelectedItems(prev => [...new Set([...prev, ...tradeItemIds])])
+                          }
+                        }}
+                        className="text-xs text-primary-600 hover:underline ml-2"
+                      >
+                        {items.every(i => selectedItems.includes(i.id)) ? 'Deselect all' : 'Select all'}
+                      </button>
                     </div>
-                    {subs.map(sub => (
-                      <label key={sub.id} className="flex items-center gap-3 p-3 hover:bg-gray-50 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={selectedSubs.includes(sub.id)}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setSelectedSubs([...selectedSubs, sub.id])
-                            } else {
-                              setSelectedSubs(selectedSubs.filter(id => id !== sub.id))
-                            }
-                          }}
-                          className="rounded border-gray-300"
-                        />
-                        <div>
-                          <span className="font-medium">{sub.company_name}</span>
-                          {sub.is_preferred && (
-                            <span className="ml-2 badge badge-success text-xs">Preferred</span>
-                          )}
-                        </div>
-                      </label>
-                    ))}
+                    <div className="border rounded-lg divide-y">
+                      {items.map(item => (
+                        <label
+                          key={item.id}
+                          className={`flex items-start gap-3 p-3 cursor-pointer hover:bg-gray-50 ${
+                            selectedItems.includes(item.id) ? 'bg-primary-50' : ''
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedItems.includes(item.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedItems([...selectedItems, item.id])
+                              } else {
+                                setSelectedItems(selectedItems.filter(id => id !== item.id))
+                              }
+                            }}
+                            className="mt-1 rounded border-gray-300"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              {item.item_number && (
+                                <span className="text-sm font-medium text-gray-500">
+                                  #{item.item_number}
+                                </span>
+                              )}
+                              <span className="font-medium text-gray-900">{item.description}</span>
+                            </div>
+                            {(item.quantity || item.scope_details) && (
+                              <p className="text-sm text-gray-500 mt-1">
+                                {item.quantity && `Qty: ${item.quantity} ${item.unit || ''}`}
+                                {item.quantity && item.scope_details && ' • '}
+                                {item.scope_details && item.scope_details.substring(0, 100)}
+                              </p>
+                            )}
+                          </div>
+                        </label>
+                      ))}
+                    </div>
                   </div>
                 ))
               ) : (
-                <p className="p-3 text-gray-500">No subcontractors found.</p>
+                <div className="text-center py-8 text-gray-500">
+                  {searchQuery ? 'No items match your search' : 'No bid items available'}
+                </div>
               )}
             </div>
-          </div>
-        </div>
+          </>
+        )}
 
+        {/* Step 2: Select Subcontractors */}
+        {step === 2 && (
+          <>
+            <div className="p-4 border-b border-gray-200">
+              <p className="text-sm text-gray-600 mb-2">
+                Showing subcontractors for selected trades: {selectedTradeIds.length} trade(s)
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={selectAllSubs}
+                  className="text-sm text-primary-600 hover:text-primary-700"
+                >
+                  Select all {relevantSubs.length} subs
+                </button>
+                <span className="text-gray-300">|</span>
+                <button
+                  onClick={() => setSelectedSubs([])}
+                  className="text-sm text-gray-600 hover:text-gray-700"
+                >
+                  Clear selection
+                </button>
+                <span className="ml-auto text-sm text-gray-500">
+                  {selectedSubs.length} selected
+                </span>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4">
+              {Object.keys(subsByTrade).length > 0 ? (
+                Object.values(subsByTrade).map(({ trade, subs }) => (
+                  <div key={trade.id} className="mb-4">
+                    <div className="font-medium text-gray-900 mb-2">
+                      Div {trade.division_code}: {trade.name}
+                    </div>
+                    <div className="border rounded-lg divide-y">
+                      {subs.map(sub => (
+                        <label
+                          key={sub.id}
+                          className={`flex items-center gap-3 p-3 cursor-pointer hover:bg-gray-50 ${
+                            selectedSubs.includes(sub.id) ? 'bg-primary-50' : ''
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedSubs.includes(sub.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedSubs([...selectedSubs, sub.id])
+                              } else {
+                                setSelectedSubs(selectedSubs.filter(id => id !== sub.id))
+                              }
+                            }}
+                            className="rounded border-gray-300"
+                          />
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">{sub.company_name}</span>
+                              {sub.is_preferred && (
+                                <span className="badge badge-success text-xs">Preferred</span>
+                              )}
+                            </div>
+                            {sub.email && (
+                              <p className="text-sm text-gray-500">{sub.email}</p>
+                            )}
+                          </div>
+                          {sub.email ? (
+                            <Mail className="h-4 w-4 text-green-500" />
+                          ) : (
+                            <span className="text-xs text-gray-400">No email</span>
+                          )}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="text-center py-8 text-gray-500">
+                  No subcontractors found for the selected trades.
+                  <br />
+                  <Link to="/subcontractors/new" className="text-primary-600 hover:underline">
+                    Add subcontractors
+                  </Link>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* Step 3: Review & Send */}
+        {step === 3 && (
+          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <h3 className="font-medium text-blue-900 mb-2">Summary</h3>
+              <ul className="text-sm text-blue-800 space-y-1">
+                <li>• {selectedItems.length} bid item(s) selected</li>
+                <li>• {selectedSubs.length} subcontractor(s) selected</li>
+                <li>• {selectedItems.length * selectedSubs.length} total invitation(s) will be created</li>
+              </ul>
+            </div>
+
+            <div>
+              <h3 className="font-medium text-gray-900 mb-2">Selected Bid Items</h3>
+              <div className="border rounded-lg max-h-32 overflow-y-auto">
+                {selectedItems.map(id => {
+                  const item = bidItems.find(i => i.id === id)
+                  return (
+                    <div key={id} className="p-2 border-b last:border-b-0 text-sm">
+                      <span className="font-medium">{item?.trade?.name}</span>: {item?.description}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div>
+              <h3 className="font-medium text-gray-900 mb-2">Selected Subcontractors</h3>
+              <div className="border rounded-lg max-h-32 overflow-y-auto">
+                {selectedSubs.map(id => {
+                  const sub = subcontractors.find(s => s.id === id)
+                  return (
+                    <div key={id} className="p-2 border-b last:border-b-0 text-sm flex items-center justify-between">
+                      <span>{sub?.company_name}</span>
+                      {sub?.email ? (
+                        <span className="text-green-600 flex items-center gap-1">
+                          <Mail className="h-3 w-3" /> {sub.email}
+                        </span>
+                      ) : (
+                        <span className="text-gray-400">No email</span>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            <label className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg cursor-pointer">
+              <input
+                type="checkbox"
+                checked={sendEmails}
+                onChange={(e) => setSendEmails(e.target.checked)}
+                className="rounded border-gray-300"
+              />
+              <div>
+                <span className="font-medium">Send email invitations</span>
+                <p className="text-sm text-gray-500">
+                  Automatically email bid requests to subcontractors with email addresses
+                </p>
+              </div>
+            </label>
+          </div>
+        )}
+
+        {/* Footer */}
         <div className="p-4 border-t border-gray-200 flex justify-between items-center">
-          <p className="text-sm text-gray-600">
-            {selectedItems.length} item(s) × {selectedSubs.length} sub(s) = {selectedItems.length * selectedSubs.length} invitation(s)
-          </p>
+          <div>
+            {step > 1 && (
+              <button
+                onClick={() => setStep(step - 1)}
+                className="btn btn-secondary"
+              >
+                Back
+              </button>
+            )}
+          </div>
           <div className="flex gap-3">
             <button type="button" className="btn btn-secondary" onClick={onClose}>
               Cancel
             </button>
-            <button className="btn btn-primary" onClick={handleInvite} disabled={loading}>
-              {loading ? 'Sending...' : 'Send Invitations'}
-            </button>
+            {step < 3 ? (
+              <button
+                className="btn btn-primary"
+                onClick={() => setStep(step + 1)}
+                disabled={step === 1 ? selectedItems.length === 0 : selectedSubs.length === 0}
+              >
+                Continue
+              </button>
+            ) : (
+              <button
+                className="btn btn-success flex items-center gap-2"
+                onClick={handleInvite}
+                disabled={loading}
+              >
+                {loading ? (
+                  'Sending...'
+                ) : (
+                  <>
+                    <Mail className="h-4 w-4" />
+                    Send {selectedItems.length * selectedSubs.length} Invitation(s)
+                  </>
+                )}
+              </button>
+            )}
           </div>
         </div>
       </div>
