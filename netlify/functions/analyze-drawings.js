@@ -16,8 +16,8 @@ export const config = {
 const BATCH_SIZE = 1
 const MAX_IMAGES = 30
 
-// Use Claude 3.5 Sonnet for best accuracy with construction drawings
-const CLAUDE_MODEL = 'claude-3-5-sonnet-20241022'
+// Use Claude Sonnet 4 for best accuracy with construction drawings
+const CLAUDE_MODEL = 'claude-sonnet-4-20250514'
 
 // CSI MasterFormat divisions for categorization
 const CSI_DIVISIONS = {
