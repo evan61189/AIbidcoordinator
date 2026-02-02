@@ -6,6 +6,7 @@ import {
   Search, Mail, Check, X
 } from 'lucide-react'
 import { fetchProject, fetchTrades, createBidItem, fetchSubcontractors, createBid } from '../lib/supabase'
+import BidLeveling from '../components/BidLeveling'
 import { format } from 'date-fns'
 import toast from 'react-hot-toast'
 
@@ -323,6 +324,9 @@ export default function ProjectDetail() {
         </div>
       </div>
 
+      {/* Bid Leveling - Compare subcontractor responses */}
+      <BidLeveling projectId={id} projectName={project?.name} />
+
       {/* Add Bid Item Modal */}
       {showAddItem && (
         <AddBidItemModal
@@ -636,7 +640,11 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
                   quantity: item?.quantity || '',
                   unit: item?.unit || ''
                 })),
-                sender_company: 'Clipper Construction'
+                sender_company: 'Clipper Construction',
+                // Tracking for reply matching
+                project_id: project?.id,
+                subcontractor_id: sub.id,
+                bid_item_ids: selectedItemsData.map(item => item?.id).filter(Boolean)
               })
             })
 

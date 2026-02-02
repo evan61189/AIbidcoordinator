@@ -1,8 +1,22 @@
 /**
  * SendGrid email service for sending bid invitations
+ * Also tracks invitations in database for reply matching
  */
 
+import { createClient } from '@supabase/supabase-js'
+
 const SENDGRID_API_URL = 'https://api.sendgrid.com/v3/mail/send'
+
+// Initialize Supabase client
+function getSupabase() {
+  if (process.env.VITE_SUPABASE_URL && process.env.VITE_SUPABASE_ANON_KEY) {
+    return createClient(
+      process.env.VITE_SUPABASE_URL,
+      process.env.VITE_SUPABASE_ANON_KEY
+    )
+  }
+  return null
+}
 
 // Standard disclaimer for all bid communications
 export const BID_DISCLAIMER = `
@@ -77,7 +91,11 @@ export async function handler(event) {
       sender_company,
       sender_email,
       sender_phone,
-      custom_message
+      custom_message,
+      // Tracking fields for reply matching
+      project_id,
+      subcontractor_id,
+      bid_item_ids
     } = JSON.parse(event.body)
 
     if (!to_email || !subject || !project_name) {
@@ -279,12 +297,43 @@ ${sender_name || 'The Project Team'}
       throw new Error(`SendGrid API error: ${response.status}`)
     }
 
+    // Save invitation tracking data to database for reply matching
+    let trackingId = null
+    const supabase = getSupabase()
+    if (supabase && project_id && subcontractor_id) {
+      try {
+        const { data: invitation, error: invError } = await supabase
+          .from('bid_invitations')
+          .insert({
+            project_id,
+            subcontractor_id,
+            to_email,
+            subject,
+            bid_item_ids: bid_item_ids || [],
+            email_sent: true,
+            status: 'sent'
+          })
+          .select('id, tracking_token')
+          .single()
+
+        if (!invError && invitation) {
+          trackingId = invitation.tracking_token
+          console.log('Invitation tracked:', invitation.id)
+        } else if (invError) {
+          console.warn('Failed to track invitation:', invError.message)
+        }
+      } catch (trackError) {
+        console.warn('Error tracking invitation:', trackError.message)
+      }
+    }
+
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         success: true,
-        message: 'Bid invitation sent successfully'
+        message: 'Bid invitation sent successfully',
+        tracking_id: trackingId
       })
     }
 
