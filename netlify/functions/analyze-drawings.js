@@ -7,13 +7,12 @@
 
 import Anthropic from '@anthropic-ai/sdk'
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY
-})
-
 // Maximum images per batch (Claude works best with ~10 images at a time)
 const BATCH_SIZE = 10
 const MAX_IMAGES = 30
+
+// Use a valid Claude model with vision capabilities
+const CLAUDE_MODEL = 'claude-3-5-sonnet-20241022'
 
 // CSI MasterFormat divisions for categorization
 const CSI_DIVISIONS = {
@@ -46,7 +45,7 @@ const CSI_DIVISIONS = {
 /**
  * Analyze a batch of images with Claude
  */
-async function analyzeBatch(images, batchNumber, totalBatches, projectName, drawingType, additionalContext) {
+async function analyzeBatch(anthropic, images, batchNumber, totalBatches, projectName, drawingType, additionalContext) {
   const imageContents = images.map(img => ({
     type: 'image',
     source: {
@@ -102,7 +101,7 @@ Return your analysis as a JSON object with this exact structure:
 Be comprehensive - it's better to include more items that can be combined later than to miss scope.`
 
   const message = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
+    model: CLAUDE_MODEL,
     max_tokens: 4096,
     messages: [
       {
@@ -241,6 +240,11 @@ export async function handler(event) {
       }
     }
 
+    // Initialize Anthropic client inside handler to ensure API key is available
+    const anthropic = new Anthropic({
+      apiKey: process.env.ANTHROPIC_API_KEY
+    })
+
     // Limit to MAX_IMAGES
     const imagesToProcess = images.slice(0, MAX_IMAGES)
     const totalImages = imagesToProcess.length
@@ -258,6 +262,7 @@ export async function handler(event) {
     for (let i = 0; i < batches.length; i++) {
       console.log(`Processing batch ${i + 1} of ${batches.length}...`)
       const result = await analyzeBatch(
+        anthropic,
         batches[i],
         i + 1,
         batches.length,
@@ -287,17 +292,34 @@ export async function handler(event) {
         analysis: mergedResult,
         images_analyzed: totalImages,
         batches_processed: batches.length,
-        model_used: 'claude-sonnet-4-20250514'
+        model_used: CLAUDE_MODEL
       })
     }
 
   } catch (error) {
     console.error('Error analyzing drawings:', error)
 
+    // Provide more specific error messages
+    let errorMessage = 'Failed to analyze drawings'
+    let statusCode = 500
+
+    if (error.status === 401) {
+      errorMessage = 'Invalid Anthropic API key. Please check your configuration.'
+      statusCode = 401
+    } else if (error.status === 429) {
+      errorMessage = 'Rate limit exceeded. Please wait and try again.'
+      statusCode = 429
+    } else if (error.status === 400) {
+      errorMessage = 'Invalid request to AI service. Image format may be unsupported.'
+      statusCode = 400
+    } else if (error.message?.includes('Could not process image')) {
+      errorMessage = 'Unable to process one or more images. Please ensure images are clear and in a supported format (PNG, JPG).'
+    }
+
     return {
-      statusCode: 500,
+      statusCode,
       body: JSON.stringify({
-        error: 'Failed to analyze drawings',
+        error: errorMessage,
         details: error.message
       })
     }
