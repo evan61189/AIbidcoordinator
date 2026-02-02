@@ -44,14 +44,13 @@ export default function DrawingAnalysis() {
   async function handleFileUpload(e) {
     const files = Array.from(e.target.files)
 
-    // Only accept image files - Claude Vision doesn't support PDFs
-    const validFiles = files.filter(file =>
-      ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(file.type)
-    )
+    // Accept images and PDFs - Claude supports both
+    const supportedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf']
+    const validFiles = files.filter(file => supportedTypes.includes(file.type))
 
     if (validFiles.length !== files.length) {
       const skipped = files.length - validFiles.length
-      toast.error(`${skipped} file(s) skipped. Only JPG, PNG, GIF, and WebP images are supported. PDFs must be converted to images first.`)
+      toast.error(`${skipped} file(s) skipped. Only JPG, PNG, GIF, WebP, and PDF files are supported.`)
     }
 
     if (validFiles.length === 0) {
@@ -284,14 +283,13 @@ export default function DrawingAnalysis() {
                   id="file-upload"
                   type="file"
                   multiple
-                  accept="image/jpeg,image/png,image/gif,image/webp"
+                  accept="image/jpeg,image/png,image/gif,image/webp,application/pdf"
                   className="hidden"
                   onChange={handleFileUpload}
                 />
                 <Upload className="h-12 w-12 mx-auto mb-3 text-gray-400" />
                 <p className="text-gray-600 mb-1">Click to upload or drag and drop</p>
-                <p className="text-sm text-gray-500">JPG, PNG, GIF, or WebP images (max 30 pages)</p>
-                <p className="text-xs text-gray-400 mt-1">PDFs must be converted to images first</p>
+                <p className="text-sm text-gray-500">PDF, JPG, PNG, GIF, or WebP (max 30 files)</p>
               </div>
             </div>
 

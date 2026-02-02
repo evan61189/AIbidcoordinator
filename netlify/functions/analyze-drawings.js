@@ -53,7 +53,7 @@ const CSI_DIVISIONS = {
 async function analyzeBatch(anthropic, images, batchNumber, totalBatches, projectName, drawingType, additionalContext) {
   console.log(`Batch ${batchNumber}: Processing ${images.length} image(s)`)
 
-  const imageContents = images.map((img, idx) => {
+  const fileContents = images.map((img, idx) => {
     // Extract base64 data, handling various formats
     let base64Data = img.data || ''
     let mediaType = img.media_type || 'image/png'
@@ -65,18 +65,31 @@ async function analyzeBatch(anthropic, images, batchNumber, totalBatches, projec
       base64Data = dataUriMatch[2]
     }
 
-    // Validate media type - Claude only supports these formats
-    const supportedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
-    if (!supportedTypes.includes(mediaType)) {
-      console.warn(`Image ${idx + 1}: Unsupported type ${mediaType}, defaulting to image/png`)
+    // Log file details for debugging
+    const sizeKB = Math.round(base64Data.length * 0.75 / 1024)
+    console.log(`File ${idx + 1}: type=${mediaType}, base64 chars=${base64Data.length}, ~${sizeKB}KB`)
+
+    // Handle PDFs as documents, images as images
+    if (mediaType === 'application/pdf') {
+      console.log(`File ${idx + 1}: Sending as PDF document`)
+      return {
+        type: 'document',
+        source: {
+          type: 'base64',
+          media_type: 'application/pdf',
+          data: base64Data
+        }
+      }
+    }
+
+    // Validate image media type
+    const supportedImageTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+    if (!supportedImageTypes.includes(mediaType)) {
+      console.warn(`File ${idx + 1}: Unsupported type ${mediaType}, defaulting to image/png`)
       mediaType = 'image/png'
     }
 
-    // Log image details for debugging
-    const sizeKB = Math.round(base64Data.length * 0.75 / 1024)
-    console.log(`Image ${idx + 1}: type=${mediaType}, base64 chars=${base64Data.length}, ~${sizeKB}KB`)
-    console.log(`Image ${idx + 1}: first 50 chars of data: ${base64Data.substring(0, 50)}...`)
-
+    console.log(`File ${idx + 1}: Sending as image`)
     return {
       type: 'image',
       source: {
@@ -144,7 +157,7 @@ Be comprehensive - it's better to include more items that can be combined later 
         {
           role: 'user',
           content: [
-            ...imageContents,
+            ...fileContents,
             { type: 'text', text: userPrompt }
           ]
         }
