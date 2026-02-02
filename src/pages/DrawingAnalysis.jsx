@@ -51,7 +51,7 @@ export default function DrawingAnalysis() {
       toast.error('Some files were skipped. Only images and PDFs are supported.')
     }
 
-    // Convert files to base64
+    // Convert files to base64 (up to 30 pages for Clipper Construction jobs)
     const imagePromises = validFiles.slice(0, 30).map(file => {
       return new Promise((resolve, reject) => {
         const reader = new FileReader()

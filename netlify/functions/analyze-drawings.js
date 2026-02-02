@@ -12,11 +12,11 @@ export const config = {
   maxDuration: 60 // 60 seconds timeout (requires Netlify Pro for >26s)
 }
 
-// Maximum images per batch (Claude works best with ~10 images at a time)
-const BATCH_SIZE = 10
+// Image limits for Netlify Pro (extended timeout)
+const BATCH_SIZE = 5
 const MAX_IMAGES = 30
 
-// Use a valid Claude model with vision capabilities
+// Use Claude 3.5 Sonnet for best accuracy with construction drawings
 const CLAUDE_MODEL = 'claude-3-5-sonnet-20241022'
 
 // CSI MasterFormat divisions for categorization
