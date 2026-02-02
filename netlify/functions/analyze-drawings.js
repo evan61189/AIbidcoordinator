@@ -12,12 +12,14 @@ export const config = {
   maxDuration: 60 // 60 seconds timeout (requires Netlify Pro for >26s)
 }
 
-// Maximum images per batch (Claude works best with ~10 images at a time)
-const BATCH_SIZE = 10
-const MAX_IMAGES = 30
+// Image limits - reduced for Netlify free tier timeout (10s)
+// For 30-page support, upgrade to Netlify Pro
+const BATCH_SIZE = 3
+const MAX_IMAGES = 6
 
-// Use a valid Claude model with vision capabilities
-const CLAUDE_MODEL = 'claude-3-5-sonnet-20241022'
+// Use a fast Claude model for Netlify free tier (10s timeout)
+// For better results, upgrade to Netlify Pro and use claude-3-5-sonnet-20241022
+const CLAUDE_MODEL = 'claude-3-haiku-20240307'
 
 // CSI MasterFormat divisions for categorization
 const CSI_DIVISIONS = {
@@ -107,7 +109,7 @@ Be comprehensive - it's better to include more items that can be combined later 
 
   const message = await anthropic.messages.create({
     model: CLAUDE_MODEL,
-    max_tokens: 4096,
+    max_tokens: 2048,
     messages: [
       {
         role: 'user',

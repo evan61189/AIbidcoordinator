@@ -51,8 +51,8 @@ export default function DrawingAnalysis() {
       toast.error('Some files were skipped. Only images and PDFs are supported.')
     }
 
-    // Convert files to base64
-    const imagePromises = validFiles.slice(0, 30).map(file => {
+    // Convert files to base64 (limit to 6 for Netlify free tier timeout)
+    const imagePromises = validFiles.slice(0, 6).map(file => {
       return new Promise((resolve, reject) => {
         const reader = new FileReader()
         reader.onload = () => {
@@ -70,7 +70,7 @@ export default function DrawingAnalysis() {
 
     try {
       const images = await Promise.all(imagePromises)
-      setUploadedImages(prev => [...prev, ...images].slice(0, 30))
+      setUploadedImages(prev => [...prev, ...images].slice(0, 6))
     } catch (error) {
       toast.error('Error reading files')
     }
@@ -268,7 +268,7 @@ export default function DrawingAnalysis() {
 
             {/* File Upload */}
             <div>
-              <label className="label">Upload Drawings (up to 30 pages)</label>
+              <label className="label">Upload Drawings (up to 6 pages)</label>
               <div
                 className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-primary-500 transition-colors cursor-pointer"
                 onClick={() => document.getElementById('file-upload').click()}
@@ -283,14 +283,14 @@ export default function DrawingAnalysis() {
                 />
                 <Upload className="h-12 w-12 mx-auto mb-3 text-gray-400" />
                 <p className="text-gray-600 mb-1">Click to upload or drag and drop</p>
-                <p className="text-sm text-gray-500">PNG, JPG, or PDF (max 30 pages)</p>
+                <p className="text-sm text-gray-500">PNG or JPG (max 6 images)</p>
               </div>
             </div>
 
             {/* Uploaded Images Preview */}
             {uploadedImages.length > 0 && (
               <div>
-                <label className="label">Uploaded Drawings ({uploadedImages.length}/30)</label>
+                <label className="label">Uploaded Drawings ({uploadedImages.length}/6)</label>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   {uploadedImages.map((img, index) => (
                     <div key={index} className="relative group">
