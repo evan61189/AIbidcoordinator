@@ -107,11 +107,11 @@ export default function DrawingAnalysis() {
         })
       })
 
-      if (!response.ok) {
-        throw new Error('Failed to analyze drawings')
-      }
-
       const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to analyze drawings')
+      }
       setAnalysisResult(data.analysis)
 
       // Pre-select all items
@@ -123,7 +123,7 @@ export default function DrawingAnalysis() {
       toast.success(`Identified ${data.analysis?.bid_items?.length || 0} bid items`)
     } catch (error) {
       console.error('Error analyzing drawings:', error)
-      toast.error('Failed to analyze drawings. Please try again.')
+      toast.error(error.message || 'Failed to analyze drawings. Please try again.')
     } finally {
       setAnalyzing(false)
     }
