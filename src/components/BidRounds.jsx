@@ -13,9 +13,11 @@ import BidLeveling from './BidLeveling'
 let pdfjsLib = null
 async function loadPdfJs() {
   if (pdfjsLib) return pdfjsLib
-  pdfjsLib = await import('pdfjs-dist')
-  const pdfjsWorker = await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
-  pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker.default
+  const pdfjs = await import('pdfjs-dist')
+  pdfjsLib = pdfjs
+  const workerModule = await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
+  pdfjs.GlobalWorkerOptions.workerSrc = workerModule.default
+  console.log('PDF.js loaded successfully')
   return pdfjsLib
 }
 
@@ -23,8 +25,14 @@ async function loadPdfJs() {
  * Convert a PDF file to an array of PNG images (as Blobs) using browser canvas
  */
 async function convertPdfToImages(pdfFile, maxPages = 100) {
+  console.log('Starting PDF conversion for:', pdfFile.name)
+
   const pdfjs = await loadPdfJs()
+  console.log('PDF.js library loaded')
+
   const arrayBuffer = await pdfFile.arrayBuffer()
+  console.log('PDF file read, size:', arrayBuffer.byteLength)
+
   const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise
   const numPages = Math.min(pdf.numPages, maxPages)
 
@@ -375,6 +383,7 @@ export default function BidRounds({ projectId, projectName }) {
   }
 
   async function handleDrawingUpload(roundId, files) {
+    console.log('handleDrawingUpload called with', files?.length, 'files')
     if (!files || files.length === 0) return
 
     setUploadingDrawings(true)
@@ -386,6 +395,7 @@ export default function BidRounds({ projectId, projectName }) {
     try {
       for (let i = 0; i < files.length; i++) {
         const file = files[i]
+        console.log('Processing file:', file.name, 'type:', file.type)
 
         // Check if file is a PDF - convert to images first
         if (file.type === 'application/pdf') {
