@@ -1,8 +1,8 @@
 /**
  * Process Uploaded Drawing
  *
- * Processes a drawing that was already uploaded to Supabase Storage.
- * Converts PDFs to images for more reliable AI analysis.
+ * Processes a drawing image that was already uploaded to Supabase Storage.
+ * PDF to image conversion happens on the frontend - this only handles images.
  */
 
 import { createClient } from '@supabase/supabase-js'
@@ -13,7 +13,6 @@ export const config = {
 }
 
 const CLAUDE_MODEL = 'claude-sonnet-4-20250514'
-const MAX_PAGES_PER_BATCH = 20 // Claude can handle ~20 images well
 
 // Initialize clients
 function getSupabase() {
@@ -63,95 +62,25 @@ async function downloadFromStorage(supabase, storagePath) {
 }
 
 /**
- * Convert PDF buffer to images using pdfjs-dist and canvas
+ * Analyze image with Claude AI
  */
-async function convertPdfToImages(pdfBuffer) {
-  console.log('Converting PDF to images...')
+async function analyzeImage(anthropic, base64Data, mimeType, projectName) {
+  console.log(`Analyzing image (${mimeType}, ${base64Data.length} chars base64)`)
 
-  try {
-    // Dynamic imports for PDF processing
-    const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs')
-    const { createCanvas } = await import('canvas')
-
-    // Load the PDF
-    const loadingTask = pdfjsLib.getDocument({ data: pdfBuffer })
-    const pdf = await loadingTask.promise
-    const numPages = pdf.numPages
-
-    console.log(`PDF has ${numPages} pages`)
-
-    const images = []
-    const pagesToProcess = Math.min(numPages, MAX_PAGES_PER_BATCH * 2) // Process up to 40 pages
-
-    for (let pageNum = 1; pageNum <= pagesToProcess; pageNum++) {
-      console.log(`Rendering page ${pageNum}/${pagesToProcess}`)
-
-      const page = await pdf.getPage(pageNum)
-
-      // Use a reasonable scale for construction drawings (150 DPI)
-      const scale = 1.5
-      const viewport = page.getViewport({ scale })
-
-      // Create canvas
-      const canvas = createCanvas(viewport.width, viewport.height)
-      const context = canvas.getContext('2d')
-
-      // Render page to canvas
-      await page.render({
-        canvasContext: context,
-        viewport: viewport
-      }).promise
-
-      // Convert to PNG base64
-      const imageBuffer = canvas.toBuffer('image/png')
-      const base64 = imageBuffer.toString('base64')
-
-      images.push({
-        pageNum,
-        base64,
-        width: viewport.width,
-        height: viewport.height
-      })
-    }
-
-    console.log(`Converted ${images.length} pages to images`)
-    return { success: true, images, totalPages: numPages }
-
-  } catch (error) {
-    console.error('PDF to image conversion failed:', error.message)
-    return { success: false, error: error.message }
-  }
-}
-
-/**
- * Analyze drawing images with Claude AI
- */
-async function analyzeDrawingImages(anthropic, images, projectName) {
-  const content = []
-
-  // Add images (limit to MAX_PAGES_PER_BATCH per request)
-  const imagesToProcess = images.slice(0, MAX_PAGES_PER_BATCH)
-
-  console.log(`Analyzing ${imagesToProcess.length} images with Claude...`)
-
-  for (const img of imagesToProcess) {
-    content.push({
+  const content = [
+    {
       type: 'image',
       source: {
         type: 'base64',
-        media_type: 'image/png',
-        data: img.base64
+        media_type: mimeType,
+        data: base64Data
       }
-    })
-  }
+    },
+    {
+      type: 'text',
+      text: `You are analyzing a construction drawing page${projectName ? ` for "${projectName}"` : ''}.
 
-  content.push({
-    type: 'text',
-    text: `You are analyzing ${imagesToProcess.length} pages of construction drawings${projectName ? ` for "${projectName}"` : ''}.
-
-Extract ALL bid items/scope items that a general contractor would need to solicit from subcontractors. Be thorough.
-
-For EACH page, identify work items that need to be bid by trade.
+Extract ALL bid items/scope items that a general contractor would need to solicit from subcontractors. Be thorough and comprehensive.
 
 CSI MasterFormat Division Codes:
 - 01: General Requirements
@@ -186,67 +115,24 @@ Return JSON:
     {
       "division_code": "09",
       "trade_name": "Finishes",
-      "description": "Gypsum board partitions",
+      "description": "Gypsum board partitions - full height",
       "quantity": "TBD",
       "unit": "SF",
       "notes": "",
       "confidence": 0.85
     }
   ],
-  "summary": "Description of drawings"
+  "summary": "Description of what this drawing shows"
 }
 
-IMPORTANT: Extract 10-50+ bid items from these drawings. Be specific and thorough.`
-  })
-
-  const message = await anthropic.messages.create({
-    model: CLAUDE_MODEL,
-    max_tokens: 8192,
-    system: 'You are an expert construction estimator. Analyze these construction drawing images and extract comprehensive bid items by CSI MasterFormat. Return only valid JSON.',
-    messages: [{ role: 'user', content }]
-  })
-
-  return message.content[0].text
-}
-
-/**
- * Analyze single image with Claude AI
- */
-async function analyzeImageFile(anthropic, fileData, mimeType, projectName) {
-  console.log('Analyzing image file directly...')
-
-  const content = [
-    {
-      type: 'image',
-      source: {
-        type: 'base64',
-        media_type: mimeType,
-        data: fileData.base64
-      }
-    },
-    {
-      type: 'text',
-      text: `Analyze this construction drawing${projectName ? ` for "${projectName}"` : ''}.
-
-Extract ALL bid items that a general contractor would need from subcontractors.
-
-Return JSON:
-{
-  "drawing_info": { "sheet_number": "", "title": "", "discipline": "" },
-  "bid_items": [
-    { "division_code": "09", "trade_name": "Finishes", "description": "...", "quantity": "TBD", "unit": "SF", "notes": "", "confidence": 0.85 }
-  ],
-  "summary": "..."
-}
-
-Extract 5-20+ specific bid items. Be thorough.`
+IMPORTANT: Extract 5-20+ bid items from this drawing. Be specific and thorough.`
     }
   ]
 
   const message = await anthropic.messages.create({
     model: CLAUDE_MODEL,
     max_tokens: 8192,
-    system: 'Expert construction estimator. Extract bid items by CSI MasterFormat. Return only valid JSON.',
+    system: 'You are an expert construction estimator. Analyze this construction drawing and extract comprehensive bid items by CSI MasterFormat. Return only valid JSON.',
     messages: [{ role: 'user', content }]
   })
 
@@ -459,7 +345,7 @@ export async function handler(event) {
         endpoint: 'process-uploaded-drawing',
         hasSupabase: !!supabase,
         hasAnthropic: !!anthropic,
-        features: ['PDF to image conversion', 'Multi-page support']
+        note: 'PDF conversion happens on frontend - this processes images only'
       })
     }
   }
@@ -523,66 +409,26 @@ export async function handler(event) {
     let analysis = { drawing_info: {}, bid_items: [] }
 
     if (processWithAI) {
-      let responseText
+      // Determine mime type for image analysis
+      let mimeType = fileType
+      if (!mimeType || mimeType === 'application/pdf') {
+        // If it's a PNG converted from PDF
+        mimeType = 'image/png'
+      }
 
-      if (fileType === 'application/pdf') {
-        // Convert PDF to images first
-        console.log('Converting PDF to images for analysis...')
-        const conversion = await convertPdfToImages(fileData.buffer)
-
-        if (conversion.success && conversion.images.length > 0) {
-          console.log(`Successfully converted ${conversion.images.length} pages`)
-          responseText = await analyzeDrawingImages(anthropic, conversion.images, projectName)
-        } else {
-          // Fallback: try document type anyway
-          console.log('PDF conversion failed, trying document type...')
-          try {
-            const content = [
-              {
-                type: 'document',
-                source: {
-                  type: 'base64',
-                  media_type: 'application/pdf',
-                  data: fileData.base64
-                }
-              },
-              {
-                type: 'text',
-                text: `Analyze these construction drawings for "${projectName || 'Unknown Project'}". Extract all bid items by CSI division. Return JSON with drawing_info, bid_items array, and summary.`
-              }
-            ]
-
-            const message = await anthropic.messages.create({
-              model: CLAUDE_MODEL,
-              max_tokens: 8192,
-              system: 'Expert construction estimator. Return only valid JSON.',
-              messages: [{ role: 'user', content }]
-            })
-            responseText = message.content[0].text
-          } catch (pdfError) {
-            console.error('PDF document type also failed:', pdfError.message)
-            analysis = {
-              drawing_info: {},
-              bid_items: [],
-              summary: `PDF processing failed: ${pdfError.message}. Try uploading individual page images instead.`,
-              error: pdfError.message
-            }
-          }
-        }
-      } else if (fileType && fileType.startsWith('image/')) {
-        // Direct image analysis
-        responseText = await analyzeImageFile(anthropic, fileData, fileType, projectName)
-      } else {
-        console.log('Unsupported file type:', fileType)
+      console.log('Starting AI analysis...')
+      try {
+        const responseText = await analyzeImage(anthropic, fileData.base64, mimeType, projectName)
+        analysis = parseAnalysisResponse(responseText)
+        console.log(`AI extracted ${analysis.bid_items?.length || 0} bid items`)
+      } catch (aiError) {
+        console.error('AI analysis error:', aiError.message)
         analysis = {
           drawing_info: {},
           bid_items: [],
-          summary: `Unsupported file type: ${fileType}`
+          summary: `AI analysis failed: ${aiError.message}`,
+          error: aiError.message
         }
-      }
-
-      if (responseText) {
-        analysis = parseAnalysisResponse(responseText)
       }
     }
 
