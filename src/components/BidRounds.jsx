@@ -50,36 +50,50 @@ async function convertPdfToImages(pdfFile, maxPages = 100) {
   const images = []
 
   for (let pageNum = 1; pageNum <= numPages; pageNum++) {
-    const page = await pdf.getPage(pageNum)
+    try {
+      console.log(`Rendering page ${pageNum}/${numPages}...`)
+      const page = await pdf.getPage(pageNum)
 
-    // Use 1.5 scale for good quality construction drawings
-    const scale = 1.5
-    const viewport = page.getViewport({ scale })
+      // Use scale 1.0 to reduce memory usage for large PDFs
+      const scale = 1.0
+      const viewport = page.getViewport({ scale })
 
-    // Create canvas
-    const canvas = document.createElement('canvas')
-    canvas.width = viewport.width
-    canvas.height = viewport.height
-    const context = canvas.getContext('2d')
+      // Create canvas
+      const canvas = document.createElement('canvas')
+      canvas.width = viewport.width
+      canvas.height = viewport.height
+      const context = canvas.getContext('2d')
 
-    // Render page to canvas
-    await page.render({
-      canvasContext: context,
-      viewport: viewport
-    }).promise
+      // Render page to canvas
+      await page.render({
+        canvasContext: context,
+        viewport: viewport
+      }).promise
 
-    // Convert to blob
-    const blob = await new Promise(resolve => {
-      canvas.toBlob(resolve, 'image/png', 0.9)
-    })
+      // Convert to blob (JPEG for smaller size)
+      const blob = await new Promise(resolve => {
+        canvas.toBlob(resolve, 'image/jpeg', 0.85)
+      })
 
-    images.push({
-      blob,
-      pageNum,
-      name: `${pdfFile.name.replace('.pdf', '')}_page_${pageNum}.png`
-    })
+      images.push({
+        blob,
+        pageNum,
+        name: `${pdfFile.name.replace('.pdf', '')}_page_${pageNum}.jpg`
+      })
+
+      // Clean up to free memory
+      canvas.width = 0
+      canvas.height = 0
+      page.cleanup()
+
+      console.log(`Page ${pageNum} converted, blob size: ${blob.size}`)
+    } catch (pageError) {
+      console.error(`Error rendering page ${pageNum}:`, pageError)
+      // Continue with other pages
+    }
   }
 
+  console.log(`PDF conversion complete: ${images.length} pages converted`)
   return images
 }
 
@@ -435,7 +449,7 @@ export default function BidRounds({ projectId, projectName }) {
               })
 
               // Create a File object from the blob
-              const imageFile = new File([img.blob], img.name, { type: 'image/png' })
+              const imageFile = new File([img.blob], img.name, { type: 'image/jpeg' })
 
               const result = await processAndUploadImage(imageFile, roundId, file.name)
 
