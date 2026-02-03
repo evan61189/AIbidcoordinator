@@ -95,7 +95,11 @@ export async function handler(event) {
       // Tracking fields for reply matching
       project_id,
       subcontractor_id,
-      bid_item_ids
+      bid_item_ids,
+      // Drawing attachments
+      drawing_ids,
+      bid_round_id,
+      include_drawing_links
     } = JSON.parse(event.body)
 
     if (!to_email || !subject || !project_name) {
@@ -173,10 +177,16 @@ export async function handler(event) {
 
           ${custom_message ? `<p>${custom_message}</p>` : ''}
 
+          ${drawingLinksHtml}
+
           ${bid_items && bid_items.length > 0 ? `
             <h3>Scope of Work</h3>
             <p>Please provide pricing for the following items:</p>
             ${bidItemsHtml}
+          ` : ''}
+
+          ${attachments.length > 0 ? `
+            <p style="color: #28a745; font-weight: bold;">📎 ${attachments.length} drawing file(s) attached to this email</p>
           ` : ''}
 
           <h3>Bid Submission Requirements</h3>
@@ -218,6 +228,94 @@ export async function handler(event) {
       </html>
     `
 
+    // Fetch drawings if drawing_ids provided
+    let drawings = []
+    let drawingLinks = []
+    let attachments = []
+    const supabase = getSupabase()
+
+    if (supabase && (drawing_ids?.length > 0 || bid_round_id)) {
+      try {
+        let query = supabase
+          .from('drawings')
+          .select('id, original_filename, storage_url, file_size, discipline, drawing_number, title')
+
+        if (drawing_ids?.length > 0) {
+          query = query.in('id', drawing_ids)
+        } else if (bid_round_id) {
+          query = query.eq('bid_round_id', bid_round_id).eq('is_current', true)
+        }
+
+        const { data: drawingData } = await query
+        drawings = drawingData || []
+
+        // Calculate total size - SendGrid limit is ~30MB for attachments
+        const totalSize = drawings.reduce((sum, d) => sum + (d.file_size || 0), 0)
+        const MAX_ATTACHMENT_SIZE = 25 * 1024 * 1024 // 25MB to be safe
+
+        if (totalSize > MAX_ATTACHMENT_SIZE || include_drawing_links) {
+          // Too large for attachments - use download links instead
+          drawingLinks = drawings.map(d => ({
+            name: d.original_filename || `${d.drawing_number} - ${d.title}`,
+            url: d.storage_url,
+            discipline: d.discipline
+          }))
+        } else {
+          // Fetch files and create attachments
+          for (const drawing of drawings) {
+            if (drawing.storage_url) {
+              try {
+                const response = await fetch(drawing.storage_url)
+                if (response.ok) {
+                  const buffer = await response.arrayBuffer()
+                  const base64 = Buffer.from(buffer).toString('base64')
+                  const filename = drawing.original_filename || `${drawing.drawing_number || 'drawing'}.pdf`
+
+                  attachments.push({
+                    content: base64,
+                    filename: filename,
+                    type: filename.endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream',
+                    disposition: 'attachment'
+                  })
+                }
+              } catch (fetchError) {
+                console.warn(`Failed to fetch drawing ${drawing.id}:`, fetchError.message)
+                // Fall back to link
+                drawingLinks.push({
+                  name: drawing.original_filename || `${drawing.drawing_number} - ${drawing.title}`,
+                  url: drawing.storage_url,
+                  discipline: drawing.discipline
+                })
+              }
+            }
+          }
+        }
+      } catch (drawingError) {
+        console.warn('Error fetching drawings:', drawingError.message)
+      }
+    }
+
+    // Build drawing links HTML if we have links
+    const drawingLinksHtml = drawingLinks.length > 0 ? `
+      <h3>Project Drawings</h3>
+      <p>Please download and review the following drawings for your bid:</p>
+      <ul style="list-style-type: none; padding: 0;">
+        ${drawingLinks.map(d => `
+          <li style="margin: 8px 0; padding: 10px; background-color: #f8f9fa; border-radius: 4px;">
+            <a href="${d.url}" style="color: #2c3e50; text-decoration: none; font-weight: bold;">
+              📄 ${d.name}
+            </a>
+            ${d.discipline ? `<span style="color: #666; font-size: 12px;"> (${d.discipline})</span>` : ''}
+          </li>
+        `).join('')}
+      </ul>
+    ` : ''
+
+    const drawingLinksText = drawingLinks.length > 0 ? `
+PROJECT DRAWINGS:
+${drawingLinks.map(d => `- ${d.name}: ${d.url}`).join('\n')}
+` : ''
+
     // Plain text version
     const textContent = `
 INVITATION TO BID
@@ -231,7 +329,7 @@ ${project_location ? `LOCATION: ${project_location}` : ''}
 ${bid_due_date ? `BID DUE DATE: ${bid_due_date}` : ''}
 
 ${custom_message || ''}
-
+${drawingLinksText}
 ${bid_items && bid_items.length > 0 ? `
 SCOPE OF WORK:
 ${bid_items.map(item => `- ${item.trade}: ${item.description} ${item.quantity ? `(${item.quantity} ${item.unit || ''})` : ''}`).join('\n')}
@@ -263,6 +361,33 @@ Best regards,
 ${sender_name || 'The Project Team'}
     `.trim()
 
+    // Build SendGrid payload
+    const sendGridPayload = {
+      personalizations: [{
+        to: [{ email: to_email, name: to_name }],
+        subject: subject
+      }],
+      from: {
+        email: sender_email || process.env.SENDGRID_FROM_EMAIL || 'noreply@bidcoordinator.com',
+        name: sender_name || sender_company || 'BidCoordinator'
+      },
+      reply_to: sender_email ? { email: sender_email, name: sender_name } : undefined,
+      content: [
+        { type: 'text/plain', value: textContent },
+        { type: 'text/html', value: htmlContent }
+      ],
+      tracking_settings: {
+        click_tracking: { enable: true },
+        open_tracking: { enable: true }
+      }
+    }
+
+    // Add attachments if we have any
+    if (attachments.length > 0) {
+      sendGridPayload.attachments = attachments
+      console.log(`Attaching ${attachments.length} drawing file(s)`)
+    }
+
     // Send via SendGrid
     const response = await fetch(SENDGRID_API_URL, {
       method: 'POST',
@@ -270,25 +395,7 @@ ${sender_name || 'The Project Team'}
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        personalizations: [{
-          to: [{ email: to_email, name: to_name }],
-          subject: subject
-        }],
-        from: {
-          email: sender_email || process.env.SENDGRID_FROM_EMAIL || 'noreply@bidcoordinator.com',
-          name: sender_name || sender_company || 'BidCoordinator'
-        },
-        reply_to: sender_email ? { email: sender_email, name: sender_name } : undefined,
-        content: [
-          { type: 'text/plain', value: textContent },
-          { type: 'text/html', value: htmlContent }
-        ],
-        tracking_settings: {
-          click_tracking: { enable: true },
-          open_tracking: { enable: true }
-        }
-      })
+      body: JSON.stringify(sendGridPayload)
     })
 
     if (!response.ok) {
@@ -299,7 +406,7 @@ ${sender_name || 'The Project Team'}
 
     // Save invitation tracking data to database for reply matching
     let trackingId = null
-    const supabase = getSupabase()
+    // supabase already initialized above for drawings
     if (supabase && project_id && subcontractor_id) {
       try {
         const { data: invitation, error: invError } = await supabase
@@ -315,6 +422,23 @@ ${sender_name || 'The Project Team'}
           })
           .select('id, tracking_token')
           .single()
+
+        // Also save to bid_round_invitations if we have a bid_round_id
+        if (bid_round_id && !invError) {
+          await supabase
+            .from('bid_round_invitations')
+            .upsert({
+              bid_round_id,
+              subcontractor_id,
+              bid_item_ids: bid_item_ids || [],
+              drawings_attached: drawings.map(d => d.id),
+              email_sent: true,
+              email_sent_at: new Date().toISOString(),
+              status: 'invited'
+            }, {
+              onConflict: 'bid_round_id,subcontractor_id'
+            })
+        }
 
         if (!invError && invitation) {
           trackingId = invitation.tracking_token
