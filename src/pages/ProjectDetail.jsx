@@ -421,7 +421,9 @@ export default function ProjectDetail() {
                                 />
                               </td>
                               <td className="font-medium">{item.item_number || '-'}</td>
-                              <td className="whitespace-normal break-words">{item.description}</td>
+                              <td className="overflow-hidden">
+                                <div className="whitespace-pre-wrap break-words">{item.description}</div>
+                              </td>
                               <td>
                                 {item.estimated_cost
                                   ? `$${Number(item.estimated_cost).toLocaleString()}`

@@ -410,7 +410,9 @@ export default function BidLeveling({ projectId, projectName }) {
                       <tbody>
                         {bid.line_items.map((item, idx) => (
                           <tr key={idx} className="border-b border-gray-200 align-top">
-                            <td className="py-2 pr-4 whitespace-normal break-words">{item.description}</td>
+                            <td className="py-2 pr-4 overflow-hidden">
+                              <div className="whitespace-pre-wrap break-words">{item.description}</div>
+                            </td>
                             <td className="py-2 text-gray-600">{item.trade || '-'}</td>
                             <td className="py-2 text-right">{item.quantity} {item.unit}</td>
                             <td className="py-2 text-right">{formatCurrency(item.unit_price)}</td>
