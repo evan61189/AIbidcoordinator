@@ -82,57 +82,80 @@ async function analyzeImage(anthropic, base64Data, mimeType, projectName) {
 
 Extract ALL bid items/scope items that a general contractor would need to solicit from subcontractors. Be thorough and comprehensive.
 
+IMPORTANT REQUIREMENTS:
+1. Include MATERIAL SPECIFICATIONS in descriptions (e.g., "5/8" Type X gypsum board on 3-5/8" metal studs @ 16" O.C." not just "drywall partitions")
+2. Reference SPEC SECTIONS when visible or inferable (e.g., "092116" for gypsum board assemblies)
+3. Note LOCATIONS/AREAS when shown (e.g., "Level 2 corridors", "Rooms 101-110")
+4. Include FINISH TYPES, ratings, or special requirements (e.g., "1-hour fire rated", "moisture resistant", "Level 4 finish")
+5. Capture ASSEMBLY DETAILS (e.g., framing, insulation, backing, accessories)
+
 CSI MasterFormat Division Codes:
 - 01: General Requirements
-- 02: Existing Conditions (demo, abatement)
-- 03: Concrete
-- 04: Masonry
-- 05: Metals (structural steel, misc metals)
-- 06: Wood/Plastics/Composites
-- 07: Thermal/Moisture Protection
-- 08: Openings (doors, windows, hardware)
-- 09: Finishes (drywall, paint, flooring, ceilings)
-- 10: Specialties
-- 11: Equipment
-- 12: Furnishings
-- 14: Conveying Equipment
-- 21: Fire Suppression
-- 22: Plumbing
-- 23: HVAC
-- 26: Electrical
-- 27: Communications
-- 31: Earthwork
-- 32: Exterior Improvements
+- 02: Existing Conditions (demolition, hazmat abatement, site clearing)
+- 03: Concrete (cast-in-place, precast, reinforcing)
+- 04: Masonry (CMU, brick, stone)
+- 05: Metals (structural steel, misc metals, railings, stairs)
+- 06: Wood/Plastics/Composites (rough carpentry, millwork, casework)
+- 07: Thermal/Moisture Protection (roofing, waterproofing, insulation, fireproofing)
+- 08: Openings (doors, frames, hardware, windows, glazing, storefronts)
+- 09: Finishes (drywall, plaster, tile, flooring, ceilings, painting)
+- 10: Specialties (signage, lockers, toilet accessories, fire extinguishers)
+- 11: Equipment (food service, lab equipment, residential appliances)
+- 12: Furnishings (window treatments, furniture, artwork)
+- 14: Conveying Equipment (elevators, escalators, lifts)
+- 21: Fire Suppression (sprinklers, standpipes, fire pumps)
+- 22: Plumbing (fixtures, piping, water heaters, gas systems)
+- 23: HVAC (ductwork, equipment, controls, TAB)
+- 26: Electrical (power, lighting, low voltage)
+- 27: Communications (data, telecom, AV systems)
+- 28: Electronic Safety/Security (fire alarm, access control, CCTV)
+- 31: Earthwork (excavation, grading, soil treatment)
+- 32: Exterior Improvements (paving, landscaping, site utilities)
+- 33: Utilities (water, sewer, storm drainage)
 
 Return JSON:
 {
   "drawing_info": {
     "sheet_number": "A1.01",
-    "title": "Floor Plan",
-    "discipline": "Architectural"
+    "title": "Floor Plan - Level 1",
+    "discipline": "Architectural",
+    "revision": "A",
+    "revision_date": "2024-01-15"
   },
   "bid_items": [
     {
       "division_code": "09",
-      "trade_name": "Finishes",
-      "description": "Gypsum board partitions - full height",
-      "quantity": "TBD",
-      "unit": "SF",
-      "notes": "",
-      "confidence": 0.85
+      "trade_name": "Drywall/Metal Framing",
+      "spec_section": "092116",
+      "description": "Type A partition: 5/8\" Type X GWB each side on 3-5/8\" 20ga metal studs @ 16\" O.C., R-11 batt insulation, 1-hour fire rated - Corridors Level 1",
+      "quantity": "450",
+      "unit": "LF",
+      "location": "Level 1 Corridors",
+      "notes": "STC 45 required per specs",
+      "confidence": 0.9
     }
   ],
-  "summary": "Description of what this drawing shows"
+  "summary": "Brief description of drawing scope and key elements"
 }
 
-IMPORTANT: Extract 5-20+ bid items from this drawing. Be specific and thorough.`
+IMPORTANT: Extract 10-30+ bid items from this drawing. Be SPECIFIC with materials, assemblies, and spec references. Generic descriptions like "drywall" or "doors" are not acceptable - include full material/assembly details.`
     }
   ]
 
   const message = await anthropic.messages.create({
     model: CLAUDE_MODEL,
     max_tokens: 8192,
-    system: 'You are an expert construction estimator. Analyze this construction drawing and extract comprehensive bid items by CSI MasterFormat. Return only valid JSON.',
+    system: `You are a senior construction estimator with 20+ years of experience preparing detailed scopes of work for subcontractor bidding.
+
+When analyzing drawings:
+- Extract SPECIFIC material specifications (gauge, thickness, type, rating, finish)
+- Reference CSI spec sections (6-digit format like 092116, 081113, etc.)
+- Note locations, areas, and room numbers when visible
+- Include assembly details (framing, substrate, insulation, accessories)
+- Identify fire ratings, acoustic ratings, and special requirements
+- Capture quantities with appropriate units (SF, LF, EA, etc.)
+
+Your goal is to create bid items detailed enough that a subcontractor knows exactly what to price without needing to review the drawings themselves. Return only valid JSON.`,
     messages: [{ role: 'user', content }]
   })
 
@@ -285,16 +308,25 @@ async function saveBidItems(supabase, projectId, bidRoundId, drawingId, bidItems
                   tradeMap[item.trade_name?.toLowerCase()] ||
                   defaultTradeId
 
+    // Build comprehensive notes including spec section and location
+    const noteParts = []
+    if (item.spec_section) noteParts.push(`Spec: ${item.spec_section}`)
+    if (item.location) noteParts.push(`Location: ${item.location}`)
+    if (item.notes) noteParts.push(item.notes)
+    const combinedNotes = noteParts.join(' | ')
+
     return {
       project_id: projectId,
       bid_round_id: bidRoundId,
       trade_id: tradeId,
       source_drawing_id: drawingId,
       item_number: `${normalizedCode || '00'}-${String(idx + 1).padStart(3, '0')}`,
-      description: truncate(item.description, 500),
+      description: truncate(item.description, 1000),
       quantity: item.quantity,
       unit: item.unit,
-      notes: item.notes,
+      notes: truncate(combinedNotes, 500),
+      spec_section: item.spec_section || null,
+      location: item.location || null,
       ai_generated: true,
       ai_confidence: item.confidence || 0.5,
       status: 'open'
