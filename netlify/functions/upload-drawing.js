@@ -128,8 +128,12 @@ async function uploadToStorage(supabase, projectId, bidRoundId, file) {
 async function analyzeDrawing(anthropic, file, projectName, drawingType) {
   const content = []
 
+  console.log('analyzeDrawing called with mimeType:', file.mimeType)
+  console.log('file size:', file.size, 'base64 length:', file.base64?.length)
+
   // Add the file based on type
   if (file.mimeType === 'application/pdf') {
+    console.log('Adding PDF as document type')
     content.push({
       type: 'document',
       source: {
@@ -138,12 +142,23 @@ async function analyzeDrawing(anthropic, file, projectName, drawingType) {
         data: file.base64
       }
     })
-  } else if (file.mimeType.startsWith('image/')) {
+  } else if (file.mimeType && file.mimeType.startsWith('image/')) {
+    console.log('Adding as image type:', file.mimeType)
     content.push({
       type: 'image',
       source: {
         type: 'base64',
         media_type: file.mimeType,
+        data: file.base64
+      }
+    })
+  } else {
+    console.log('Unknown mimeType, attempting as document:', file.mimeType)
+    content.push({
+      type: 'document',
+      source: {
+        type: 'base64',
+        media_type: file.mimeType || 'application/pdf',
         data: file.base64
       }
     })
@@ -225,6 +240,9 @@ IMPORTANT:
 - Include ALL trades visible in the drawings`
   })
 
+  console.log('Calling Claude API for analysis...')
+  console.log('Content types being sent:', content.map(c => c.type))
+
   const message = await anthropic.messages.create({
     model: CLAUDE_MODEL,
     max_tokens: 8192,
@@ -233,12 +251,17 @@ IMPORTANT:
   })
 
   const responseText = message.content[0].text
+  console.log('Received Claude response length:', responseText.length)
+  console.log('Response preview:', responseText.substring(0, 500))
 
   // Parse JSON
   try {
     const codeBlockMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)```/)
     if (codeBlockMatch) {
-      return JSON.parse(codeBlockMatch[1].trim())
+      console.log('Found JSON in code block')
+      const parsed = JSON.parse(codeBlockMatch[1].trim())
+      console.log('Parsed bid_items count:', parsed.bid_items?.length || 0)
+      return parsed
     }
 
     const jsonStart = responseText.indexOf('{')
@@ -254,18 +277,24 @@ IMPORTANT:
         }
       }
       if (jsonEnd > jsonStart) {
-        return JSON.parse(responseText.substring(jsonStart, jsonEnd))
+        console.log('Found raw JSON object')
+        const parsed = JSON.parse(responseText.substring(jsonStart, jsonEnd))
+        console.log('Parsed bid_items count:', parsed.bid_items?.length || 0)
+        return parsed
       }
     }
+
+    console.log('No JSON found in response')
   } catch (e) {
     console.error('JSON parse error:', e.message)
+    console.error('Failed to parse:', responseText.substring(0, 1000))
   }
 
   return {
     drawing_info: {},
     bid_items: [],
     summary: 'Analysis completed but extraction failed',
-    raw_response: responseText
+    raw_response: responseText.substring(0, 2000)
   }
 }
 

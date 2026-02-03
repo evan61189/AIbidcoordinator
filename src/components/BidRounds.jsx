@@ -366,10 +366,11 @@ export default function BidRounds({ projectId, projectName }) {
           }
         }
 
-        // Track bid items created
-        if (result.bid_items_created) {
-          totalBidItemsCreated += result.bid_items_created
-        }
+        // Track bid items
+        const extracted = result.bid_items_extracted || 0
+        const created = result.bid_items_created || 0
+        totalBidItemsCreated += created
+
         // Handle both single file and batch responses
         if (result.results) {
           result.results.forEach(r => {
@@ -377,12 +378,30 @@ export default function BidRounds({ projectId, projectName }) {
           })
         }
 
-        console.log(`Processed ${file.name}:`, result)
+        // Log detailed results for debugging
+        console.log(`Processed ${file.name}:`, {
+          extracted,
+          created,
+          summary: result.summary,
+          parseError: result.parse_error,
+          drawingInfo: result.drawing_info
+        })
+
+        // Show warning if items were extracted but not saved
+        if (extracted > 0 && created === 0) {
+          console.warn(`${extracted} items extracted but none saved - check trade mapping`)
+        }
+        if (result.parse_error) {
+          console.warn('Parse error detected:', result.parse_error)
+        }
       }
 
-      const bidItemsMsg = totalBidItemsCreated > 0
-        ? ` and extracted ${totalBidItemsCreated} bid item(s)`
-        : ' (no bid items extracted - check drawings have visible scope)'
+      let bidItemsMsg
+      if (totalBidItemsCreated > 0) {
+        bidItemsMsg = ` and extracted ${totalBidItemsCreated} bid item(s)`
+      } else {
+        bidItemsMsg = ' (no bid items extracted - check Netlify function logs for details)'
+      }
       toast.success(`Uploaded ${files.length} drawing(s)${bidItemsMsg}`)
       loadRounds()
     } catch (error) {
