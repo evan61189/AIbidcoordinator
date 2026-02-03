@@ -80,112 +80,59 @@ async function analyzeImage(anthropic, base64Data, mimeType, projectName) {
       type: 'text',
       text: `You are analyzing a construction drawing page${projectName ? ` for "${projectName}"` : ''}.
 
-Extract ALL bid items/scope items that a general contractor would need to solicit from subcontractors. Be EXHAUSTIVE - capture everything visible.
-
-EXTRACTION GUIDELINES:
-1. QUANTITY FIRST: Extract as many items as possible. More items is better than fewer detailed items.
-2. ADD DETAIL when visible: material specs, gauges, thicknesses, types, ratings, finishes
-3. SPEC SECTIONS: Include when shown on drawings or inferable (e.g., "092116" for gypsum board)
-4. LOCATIONS: Note areas, rooms, levels when visible
-5. BREAK DOWN assemblies: A wall partition should generate items for framing, insulation, GWB, taping, painting separately if visible
-6. Don't skip items just because full specs aren't visible - include what you can see
+Extract ALL bid items/scope items that a general contractor would need to solicit from subcontractors. Be thorough and comprehensive.
 
 CSI MasterFormat Division Codes:
 - 01: General Requirements
-- 02: Existing Conditions (demolition, hazmat abatement, site clearing)
-- 03: Concrete (cast-in-place, precast, reinforcing, polishing)
-- 04: Masonry (CMU, brick, stone, grout, reinforcing)
-- 05: Metals (structural steel, misc metals, railings, stairs, handrails)
-- 06: Wood/Plastics/Composites (rough carpentry, millwork, casework, blocking)
-- 07: Thermal/Moisture Protection (roofing, waterproofing, insulation, fireproofing, caulking)
-- 08: Openings (doors, frames, hardware, windows, glazing, storefronts, relites)
-- 09: Finishes (drywall, framing, plaster, tile, flooring, ceilings, painting, wall protection)
-- 10: Specialties (signage, lockers, toilet accessories, fire extinguishers, corner guards)
-- 11: Equipment (food service, lab equipment, fume hoods, casework)
-- 12: Furnishings (window treatments, furniture, artwork)
-- 14: Conveying Equipment (elevators, escalators, lifts)
-- 21: Fire Suppression (sprinklers, standpipes, fire pumps, extinguishers)
-- 22: Plumbing (fixtures, piping, water heaters, gas systems, drains)
-- 23: HVAC (ductwork, diffusers, equipment, controls, TAB, exhaust)
-- 26: Electrical (power, lighting, receptacles, switches, panels)
-- 27: Communications (data, telecom, AV systems, paging)
-- 28: Electronic Safety/Security (fire alarm, access control, CCTV)
-- 31: Earthwork (excavation, grading, soil treatment)
-- 32: Exterior Improvements (paving, landscaping, site utilities, fencing)
-- 33: Utilities (water, sewer, storm drainage)
+- 02: Existing Conditions (demo, abatement)
+- 03: Concrete
+- 04: Masonry
+- 05: Metals (structural steel, misc metals)
+- 06: Wood/Plastics/Composites
+- 07: Thermal/Moisture Protection
+- 08: Openings (doors, windows, hardware)
+- 09: Finishes (drywall, paint, flooring, ceilings)
+- 10: Specialties
+- 11: Equipment
+- 12: Furnishings
+- 14: Conveying Equipment
+- 21: Fire Suppression
+- 22: Plumbing
+- 23: HVAC
+- 26: Electrical
+- 27: Communications
+- 31: Earthwork
+- 32: Exterior Improvements
 
 Return JSON:
 {
   "drawing_info": {
     "sheet_number": "A1.01",
-    "title": "Floor Plan - Level 1",
-    "discipline": "Architectural",
-    "revision": "A",
-    "revision_date": "2024-01-15"
+    "title": "Floor Plan",
+    "discipline": "Architectural"
   },
   "bid_items": [
     {
       "division_code": "09",
-      "trade_name": "Drywall/Metal Framing",
-      "spec_section": "092116",
-      "description": "Type A partition: 5/8\" Type X GWB each side on 3-5/8\" 20ga metal studs @ 16\" O.C., R-11 batt insulation, 1-hour fire rated",
-      "quantity": "450",
-      "unit": "LF",
-      "location": "Level 1 Corridors",
-      "notes": "STC 45 required per specs",
-      "confidence": 0.9
-    },
-    {
-      "division_code": "09",
-      "trade_name": "Painting",
-      "spec_section": "099123",
-      "description": "Prime and paint new GWB partitions - 2 coats latex, eggshell finish",
-      "quantity": "900",
+      "trade_name": "Finishes",
+      "description": "Gypsum board partitions - full height",
+      "quantity": "TBD",
       "unit": "SF",
-      "location": "Level 1 Corridors",
       "notes": "",
-      "confidence": 0.7
+      "confidence": 0.85
     }
   ],
-  "summary": "Brief description of drawing scope and key elements"
+  "summary": "Description of what this drawing shows"
 }
 
-CRITICAL: Extract 20-50+ bid items from this drawing. Look for:
-- Wall types and partitions (each type separately)
-- Door and frame schedules (each door type)
-- Ceiling types and heights
-- Flooring types and transitions
-- MEP rough-in and fixtures
-- Casework and millwork
-- Specialties (accessories, signage, protection)
-- Demolition scope if renovation
-- Paint and finishes for each substrate`
+IMPORTANT: Extract 5-20+ bid items from this drawing. Be specific and thorough.`
     }
   ]
 
   const message = await anthropic.messages.create({
     model: CLAUDE_MODEL,
-    max_tokens: 16384,
-    system: `You are a senior construction estimator preparing comprehensive bid item lists from construction drawings.
-
-PRIORITY ORDER:
-1. COMPREHENSIVE EXTRACTION - Capture every possible scope item. Missing items is worse than imperfect descriptions.
-2. GRANULAR BREAKDOWN - Break assemblies into component parts (framing, insulation, finishes, painting as separate items)
-3. MATERIAL DETAILS - Include specs when visible (gauges, types, thicknesses, ratings)
-4. SPEC REFERENCES - Add CSI spec sections when shown or inferable (6-digit format)
-5. LOCATIONS - Note areas and rooms when identifiable
-
-For each drawing, systematically scan:
-- Title block for sheet info
-- Legends and keynotes for material specs
-- Partition types and wall schedules
-- Door/window schedules
-- Finish schedules
-- Room names for locations
-- Notes and callouts for special requirements
-- Demolition vs new work
-
-Extract 20-50+ items per drawing page. Return only valid JSON.`,
+    max_tokens: 8192,
+    system: 'You are an expert construction estimator. Analyze this construction drawing and extract comprehensive bid items by CSI MasterFormat. Return only valid JSON.',
     messages: [{ role: 'user', content }]
   })
 
