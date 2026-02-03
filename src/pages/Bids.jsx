@@ -41,35 +41,92 @@ export default function Bids() {
   }
 
   async function handleApproveResponse(response) {
-    // Find matching bid for this subcontractor/project
-    const matchingBid = bids.find(b =>
+    // Find ALL matching bids for this subcontractor/project
+    const matchingBids = bids.filter(b =>
       b.subcontractor?.id === response.subcontractor_id &&
       b.bid_item?.project?.id === response.project_id &&
       b.status === 'invited'
     )
 
-    if (!matchingBid) {
-      alert('Could not find matching bid to update. The response has been marked as approved.')
+    if (matchingBids.length === 0) {
+      alert('Could not find any matching bids to update. The response will be marked as approved.')
     }
 
     try {
-      // Update the bid if found
-      if (matchingBid) {
-        await updateBid(matchingBid.id, {
+      let updatedCount = 0
+      const lineItems = response.line_items || []
+
+      if (lineItems.length > 0 && matchingBids.length > 0) {
+        // Try to match line items to bids by trade name or description
+        for (const lineItem of lineItems) {
+          const lineItemTrade = lineItem.trade?.toLowerCase() || ''
+          const lineItemDesc = lineItem.description?.toLowerCase() || ''
+          const lineItemAmount = lineItem.total || lineItem.unit_price || 0
+
+          // Find best matching bid
+          let bestMatch = null
+          let bestScore = 0
+
+          for (const bid of matchingBids) {
+            const bidTrade = bid.bid_item?.trade?.name?.toLowerCase() || ''
+            const bidDesc = bid.bid_item?.description?.toLowerCase() || ''
+
+            let score = 0
+            // Check trade match
+            if (lineItemTrade && bidTrade && (
+              lineItemTrade.includes(bidTrade) ||
+              bidTrade.includes(lineItemTrade)
+            )) {
+              score += 10
+            }
+            // Check description overlap
+            if (lineItemDesc && bidDesc) {
+              const lineWords = lineItemDesc.split(/\s+/)
+              const bidWords = bidDesc.split(/\s+/)
+              const matchingWords = lineWords.filter(w =>
+                w.length > 3 && bidWords.some(bw => bw.includes(w) || w.includes(bw))
+              )
+              score += matchingWords.length
+            }
+
+            if (score > bestScore) {
+              bestScore = score
+              bestMatch = bid
+            }
+          }
+
+          // Update the matched bid if we found one with any confidence
+          if (bestMatch && lineItemAmount > 0) {
+            await updateBid(bestMatch.id, {
+              amount: lineItemAmount,
+              status: 'submitted',
+              submitted_at: new Date().toISOString()
+            })
+            updatedCount++
+            // Remove from matchingBids so we don't match it again
+            const idx = matchingBids.indexOf(bestMatch)
+            if (idx > -1) matchingBids.splice(idx, 1)
+          }
+        }
+      }
+
+      // If no line items matched but we have a total, update the first bid
+      if (updatedCount === 0 && response.total_amount && matchingBids.length > 0) {
+        await updateBid(matchingBids[0].id, {
           amount: response.total_amount,
           status: 'submitted',
           submitted_at: new Date().toISOString()
         })
+        updatedCount = 1
       }
 
       // Mark response as approved
       await updateBidResponse(response.id, {
         status: 'approved',
-        bid_id: matchingBid?.id,
         reviewed_at: new Date().toISOString()
       })
 
-      alert(`Bid response approved! ${matchingBid ? `Bid updated to $${response.total_amount?.toLocaleString()}` : ''}`)
+      alert(`Bid response approved! Updated ${updatedCount} bid(s) with amounts from line items.`)
       loadData()
     } catch (error) {
       console.error('Error approving response:', error)
