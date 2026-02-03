@@ -211,7 +211,9 @@ export default function SubcontractorDetail() {
                         {bid.bid_item?.project?.name || 'Unknown'}
                       </Link>
                     </td>
-                    <td className="whitespace-normal break-words">{bid.bid_item?.description}</td>
+                    <td className="overflow-hidden">
+                      <div className="whitespace-pre-wrap break-words">{bid.bid_item?.description}</div>
+                    </td>
                     <td className="font-medium">
                       {bid.amount ? `$${Number(bid.amount).toLocaleString()}` : '-'}
                     </td>
