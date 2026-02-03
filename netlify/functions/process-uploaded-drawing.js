@@ -2,17 +2,18 @@
  * Process Uploaded Drawing
  *
  * Processes a drawing that was already uploaded to Supabase Storage.
- * This allows handling large files that exceed Netlify's payload limit.
+ * Converts PDFs to images for more reliable AI analysis.
  */
 
 import { createClient } from '@supabase/supabase-js'
 import Anthropic from '@anthropic-ai/sdk'
 
 export const config = {
-  maxDuration: 300 // 5 minutes for AI processing of large PDFs
+  maxDuration: 300 // 5 minutes for AI processing
 }
 
 const CLAUDE_MODEL = 'claude-sonnet-4-20250514'
+const MAX_PAGES_PER_BATCH = 20 // Claude can handle ~20 images well
 
 // Initialize clients
 function getSupabase() {
@@ -51,7 +52,6 @@ async function downloadFromStorage(supabase, storagePath) {
     throw new Error(`Failed to download file: ${error.message}`)
   }
 
-  // Convert blob to buffer
   const arrayBuffer = await data.arrayBuffer()
   const buffer = Buffer.from(arrayBuffer)
 
@@ -63,57 +63,95 @@ async function downloadFromStorage(supabase, storagePath) {
 }
 
 /**
- * Analyze drawing with Claude AI
+ * Convert PDF buffer to images using pdfjs-dist and canvas
  */
-async function analyzeDrawing(anthropic, fileData, mimeType, projectName, drawingType) {
+async function convertPdfToImages(pdfBuffer) {
+  console.log('Converting PDF to images...')
+
+  try {
+    // Dynamic imports for PDF processing
+    const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs')
+    const { createCanvas } = await import('canvas')
+
+    // Load the PDF
+    const loadingTask = pdfjsLib.getDocument({ data: pdfBuffer })
+    const pdf = await loadingTask.promise
+    const numPages = pdf.numPages
+
+    console.log(`PDF has ${numPages} pages`)
+
+    const images = []
+    const pagesToProcess = Math.min(numPages, MAX_PAGES_PER_BATCH * 2) // Process up to 40 pages
+
+    for (let pageNum = 1; pageNum <= pagesToProcess; pageNum++) {
+      console.log(`Rendering page ${pageNum}/${pagesToProcess}`)
+
+      const page = await pdf.getPage(pageNum)
+
+      // Use a reasonable scale for construction drawings (150 DPI)
+      const scale = 1.5
+      const viewport = page.getViewport({ scale })
+
+      // Create canvas
+      const canvas = createCanvas(viewport.width, viewport.height)
+      const context = canvas.getContext('2d')
+
+      // Render page to canvas
+      await page.render({
+        canvasContext: context,
+        viewport: viewport
+      }).promise
+
+      // Convert to PNG base64
+      const imageBuffer = canvas.toBuffer('image/png')
+      const base64 = imageBuffer.toString('base64')
+
+      images.push({
+        pageNum,
+        base64,
+        width: viewport.width,
+        height: viewport.height
+      })
+    }
+
+    console.log(`Converted ${images.length} pages to images`)
+    return { success: true, images, totalPages: numPages }
+
+  } catch (error) {
+    console.error('PDF to image conversion failed:', error.message)
+    return { success: false, error: error.message }
+  }
+}
+
+/**
+ * Analyze drawing images with Claude AI
+ */
+async function analyzeDrawingImages(anthropic, images, projectName) {
   const content = []
 
-  console.log('analyzeDrawing called with mimeType:', mimeType)
-  console.log('fileData size:', fileData.size, 'base64 length:', fileData.base64?.length)
+  // Add images (limit to MAX_PAGES_PER_BATCH per request)
+  const imagesToProcess = images.slice(0, MAX_PAGES_PER_BATCH)
 
-  // Add the file based on type
-  if (mimeType === 'application/pdf') {
-    console.log('Adding PDF as document type')
-    content.push({
-      type: 'document',
-      source: {
-        type: 'base64',
-        media_type: 'application/pdf',
-        data: fileData.base64
-      }
-    })
-  } else if (mimeType && mimeType.startsWith('image/')) {
-    console.log('Adding as image type:', mimeType)
+  console.log(`Analyzing ${imagesToProcess.length} images with Claude...`)
+
+  for (const img of imagesToProcess) {
     content.push({
       type: 'image',
       source: {
         type: 'base64',
-        media_type: mimeType,
-        data: fileData.base64
-      }
-    })
-  } else {
-    console.log('Unknown mimeType, attempting as document:', mimeType)
-    // Try as document for unknown types
-    content.push({
-      type: 'document',
-      source: {
-        type: 'base64',
-        media_type: mimeType || 'application/pdf',
-        data: fileData.base64
+        media_type: 'image/png',
+        data: img.base64
       }
     })
   }
 
   content.push({
     type: 'text',
-    text: `You are analyzing construction drawings${projectName ? ` for the project "${projectName}"` : ''}${drawingType ? ` (${drawingType} drawings)` : ''}.
+    text: `You are analyzing ${imagesToProcess.length} pages of construction drawings${projectName ? ` for "${projectName}"` : ''}.
 
-Your task is to extract ALL bid items/scope items that a general contractor would need to solicit from subcontractors. Be thorough and comprehensive.
+Extract ALL bid items/scope items that a general contractor would need to solicit from subcontractors. Be thorough.
 
-For each sheet/page in the document, identify:
-1. Drawing information (sheet number, title, discipline)
-2. ALL work items that need to be bid by trade
+For EACH page, identify work items that need to be bid by trade.
 
 CSI MasterFormat Division Codes:
 - 01: General Requirements
@@ -121,126 +159,149 @@ CSI MasterFormat Division Codes:
 - 03: Concrete
 - 04: Masonry
 - 05: Metals (structural steel, misc metals)
-- 06: Wood/Plastics/Composites (rough carpentry, finish carpentry, casework)
-- 07: Thermal/Moisture Protection (roofing, insulation, waterproofing)
-- 08: Openings (doors, windows, hardware, glazing)
-- 09: Finishes (drywall, paint, flooring, ceilings, tile)
-- 10: Specialties (toilet accessories, signage, lockers)
-- 11: Equipment (kitchen equipment, lab equipment)
-- 12: Furnishings (furniture, window treatments)
-- 13: Special Construction
-- 14: Conveying Equipment (elevators)
+- 06: Wood/Plastics/Composites
+- 07: Thermal/Moisture Protection
+- 08: Openings (doors, windows, hardware)
+- 09: Finishes (drywall, paint, flooring, ceilings)
+- 10: Specialties
+- 11: Equipment
+- 12: Furnishings
+- 14: Conveying Equipment
 - 21: Fire Suppression
 - 22: Plumbing
 - 23: HVAC
 - 26: Electrical
 - 27: Communications
-- 28: Electronic Safety/Security
 - 31: Earthwork
-- 32: Exterior Improvements (paving, landscaping)
-- 33: Utilities
+- 32: Exterior Improvements
 
-Return a JSON object with this EXACT structure:
+Return JSON:
 {
   "drawing_info": {
     "sheet_number": "A1.01",
-    "title": "Floor Plan - Level 1",
-    "discipline": "Architectural",
-    "discipline_code": "A",
-    "revision": "1",
-    "revision_date": "2024-01-15"
+    "title": "Floor Plan",
+    "discipline": "Architectural"
   },
   "bid_items": [
     {
       "division_code": "09",
       "trade_name": "Finishes",
-      "description": "Gypsum board partitions - full height to deck",
-      "quantity": "Approx 2,500 LF",
-      "unit": "LF",
-      "notes": "Include acoustic insulation at rated walls",
-      "confidence": 0.85
-    },
-    {
-      "division_code": "09",
-      "trade_name": "Finishes",
-      "description": "Level 5 finish at all GWB surfaces",
+      "description": "Gypsum board partitions",
       "quantity": "TBD",
       "unit": "SF",
       "notes": "",
-      "confidence": 0.8
+      "confidence": 0.85
     }
   ],
-  "summary": "First floor architectural plan showing office layout with conference rooms, open office areas, and support spaces."
+  "summary": "Description of drawings"
 }
 
-IMPORTANT:
-- Extract MULTIPLE bid items - most drawings have 5-20+ items
-- Be specific in descriptions (e.g., "hollow metal door frames" not just "doors")
-- Include quantities when visible or estimable
-- Group related items appropriately
-- Include ALL trades visible in the drawings`
+IMPORTANT: Extract 10-50+ bid items from these drawings. Be specific and thorough.`
   })
-
-  console.log('Calling Claude API for analysis...')
-  console.log('Content types being sent:', content.map(c => c.type))
 
   const message = await anthropic.messages.create({
     model: CLAUDE_MODEL,
     max_tokens: 8192,
-    system: 'You are an expert construction estimator and bid coordinator. Your job is to analyze construction drawings and extract comprehensive bid items organized by CSI MasterFormat divisions. Be thorough - extract ALL scope items visible in the drawings. Return only valid JSON.',
+    system: 'You are an expert construction estimator. Analyze these construction drawing images and extract comprehensive bid items by CSI MasterFormat. Return only valid JSON.',
     messages: [{ role: 'user', content }]
   })
 
-  const responseText = message.content[0].text
-  console.log('Received Claude response length:', responseText.length)
-  console.log('Response preview:', responseText.substring(0, 500))
+  return message.content[0].text
+}
 
-  // Parse JSON
+/**
+ * Analyze single image with Claude AI
+ */
+async function analyzeImageFile(anthropic, fileData, mimeType, projectName) {
+  console.log('Analyzing image file directly...')
+
+  const content = [
+    {
+      type: 'image',
+      source: {
+        type: 'base64',
+        media_type: mimeType,
+        data: fileData.base64
+      }
+    },
+    {
+      type: 'text',
+      text: `Analyze this construction drawing${projectName ? ` for "${projectName}"` : ''}.
+
+Extract ALL bid items that a general contractor would need from subcontractors.
+
+Return JSON:
+{
+  "drawing_info": { "sheet_number": "", "title": "", "discipline": "" },
+  "bid_items": [
+    { "division_code": "09", "trade_name": "Finishes", "description": "...", "quantity": "TBD", "unit": "SF", "notes": "", "confidence": 0.85 }
+  ],
+  "summary": "..."
+}
+
+Extract 5-20+ specific bid items. Be thorough.`
+    }
+  ]
+
+  const message = await anthropic.messages.create({
+    model: CLAUDE_MODEL,
+    max_tokens: 8192,
+    system: 'Expert construction estimator. Extract bid items by CSI MasterFormat. Return only valid JSON.',
+    messages: [{ role: 'user', content }]
+  })
+
+  return message.content[0].text
+}
+
+/**
+ * Parse JSON from Claude response
+ */
+function parseAnalysisResponse(responseText) {
+  console.log('Parsing response, length:', responseText.length)
+
   try {
+    // Try code block first
     const codeBlockMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)```/)
     if (codeBlockMatch) {
-      console.log('Found JSON in code block')
       const parsed = JSON.parse(codeBlockMatch[1].trim())
-      console.log('Parsed bid_items count:', parsed.bid_items?.length || 0)
+      console.log('Parsed from code block, bid_items:', parsed.bid_items?.length || 0)
       return parsed
     }
 
+    // Try raw JSON
     const jsonStart = responseText.indexOf('{')
     if (jsonStart !== -1) {
-      let braceCount = 0
+      let depth = 0
       let jsonEnd = -1
       for (let i = jsonStart; i < responseText.length; i++) {
-        if (responseText[i] === '{') braceCount++
-        if (responseText[i] === '}') braceCount--
-        if (braceCount === 0) {
+        if (responseText[i] === '{') depth++
+        if (responseText[i] === '}') depth--
+        if (depth === 0) {
           jsonEnd = i + 1
           break
         }
       }
       if (jsonEnd > jsonStart) {
-        console.log('Found raw JSON object')
         const parsed = JSON.parse(responseText.substring(jsonStart, jsonEnd))
-        console.log('Parsed bid_items count:', parsed.bid_items?.length || 0)
+        console.log('Parsed raw JSON, bid_items:', parsed.bid_items?.length || 0)
         return parsed
       }
     }
-
-    console.log('No JSON found in response')
   } catch (e) {
     console.error('JSON parse error:', e.message)
-    console.error('Failed to parse:', responseText.substring(0, 1000))
+    console.error('Response preview:', responseText.substring(0, 500))
   }
 
   return {
     drawing_info: {},
     bid_items: [],
-    summary: 'Analysis completed but extraction failed',
+    summary: 'Analysis completed but JSON parsing failed',
     raw_response: responseText.substring(0, 2000)
   }
 }
 
 /**
- * Convert MIME type to short file extension (fits VARCHAR(10))
+ * Convert MIME type to short file extension
  */
 function getShortFileType(mimeType) {
   const mimeMap = {
@@ -248,8 +309,7 @@ function getShortFileType(mimeType) {
     'image/png': 'png',
     'image/jpeg': 'jpeg',
     'image/jpg': 'jpg',
-    'image/webp': 'webp',
-    'image/gif': 'gif'
+    'image/webp': 'webp'
   }
   return mimeMap[mimeType] || mimeType?.split('/').pop()?.substring(0, 10) || 'unknown'
 }
@@ -314,41 +374,30 @@ async function saveBidItems(supabase, projectId, bidRoundId, drawingId, bidItems
 
   console.log(`Saving ${bidItems.length} bid items, ${trades.length} trades available`)
 
-  // Map trade names and codes to IDs (handle both "9" and "09" formats)
+  // Map trade names and codes to IDs
   const tradeMap = {}
   let defaultTradeId = null
   trades.forEach(t => {
-    // Store by division code as-is
     tradeMap[t.division_code] = t.id
-    // Also store without leading zero (e.g., "9" for "09")
     tradeMap[t.division_code.replace(/^0/, '')] = t.id
-    // Store by name (lowercase)
     tradeMap[t.name.toLowerCase()] = t.id
-    // Track default trade (General Requirements)
     if (t.division_code === '01') {
       defaultTradeId = t.id
     }
   })
 
-  // If no General Requirements trade, use first available
   if (!defaultTradeId && trades.length > 0) {
     defaultTradeId = trades[0].id
   }
 
   const itemsToInsert = bidItems.map((item, idx) => {
-    // Normalize division code (pad single digits)
     const normalizedCode = item.division_code ?
       item.division_code.toString().padStart(2, '0') : null
 
-    // Find trade ID with multiple fallbacks
-    let tradeId = tradeMap[normalizedCode] ||
+    const tradeId = tradeMap[normalizedCode] ||
                   tradeMap[item.division_code] ||
                   tradeMap[item.trade_name?.toLowerCase()] ||
                   defaultTradeId
-
-    if (!tradeId) {
-      console.warn(`No trade found for item: ${item.description} (code: ${item.division_code}, trade: ${item.trade_name})`)
-    }
 
     return {
       project_id: projectId,
@@ -356,7 +405,7 @@ async function saveBidItems(supabase, projectId, bidRoundId, drawingId, bidItems
       trade_id: tradeId,
       source_drawing_id: drawingId,
       item_number: `${normalizedCode || '00'}-${String(idx + 1).padStart(3, '0')}`,
-      description: item.description,
+      description: truncate(item.description, 500),
       quantity: item.quantity,
       unit: item.unit,
       notes: item.notes,
@@ -367,7 +416,7 @@ async function saveBidItems(supabase, projectId, bidRoundId, drawingId, bidItems
   }).filter(item => item.trade_id && item.description)
 
   if (itemsToInsert.length === 0) {
-    console.log('No valid bid items to insert after filtering')
+    console.log('No valid bid items after filtering')
     return []
   }
 
@@ -398,7 +447,6 @@ export async function handler(event) {
     return { statusCode: 204, headers }
   }
 
-  // Health check
   if (event.httpMethod === 'GET') {
     const supabase = getSupabase()
     const anthropic = getAnthropic()
@@ -411,7 +459,7 @@ export async function handler(event) {
         endpoint: 'process-uploaded-drawing',
         hasSupabase: !!supabase,
         hasAnthropic: !!anthropic,
-        description: 'Processes drawings already uploaded to Supabase Storage'
+        features: ['PDF to image conversion', 'Multi-page support']
       })
     }
   }
@@ -432,6 +480,14 @@ export async function handler(event) {
       statusCode: 500,
       headers,
       body: JSON.stringify({ error: 'Supabase not configured' })
+    }
+  }
+
+  if (!anthropic) {
+    return {
+      statusCode: 500,
+      headers,
+      body: JSON.stringify({ error: 'Anthropic API not configured' })
     }
   }
 
@@ -457,39 +513,80 @@ export async function handler(event) {
       }
     }
 
-    console.log(`Processing uploaded drawing: ${storagePath}`)
-    console.log(`File type: ${fileType}, Size: ${fileSize} bytes`)
+    console.log(`Processing: ${storagePath}`)
+    console.log(`Type: ${fileType}, Size: ${fileSize} bytes`)
 
-    // Download file from storage
-    console.log('Downloading from storage...')
+    // Download file
     const fileData = await downloadFromStorage(supabase, storagePath)
     console.log(`Downloaded ${fileData.size} bytes`)
 
     let analysis = { drawing_info: {}, bid_items: [] }
 
-    // Analyze with AI if enabled
-    if (processWithAI && anthropic) {
-      console.log('Starting AI analysis...')
-      console.log('File type for analysis:', fileType)
-      try {
-        analysis = await analyzeDrawing(anthropic, fileData, fileType, projectName)
-        console.log(`AI extracted ${analysis.bid_items?.length || 0} bid items`)
-        if (analysis.bid_items && analysis.bid_items.length > 0) {
-          console.log('First bid item:', JSON.stringify(analysis.bid_items[0]))
+    if (processWithAI) {
+      let responseText
+
+      if (fileType === 'application/pdf') {
+        // Convert PDF to images first
+        console.log('Converting PDF to images for analysis...')
+        const conversion = await convertPdfToImages(fileData.buffer)
+
+        if (conversion.success && conversion.images.length > 0) {
+          console.log(`Successfully converted ${conversion.images.length} pages`)
+          responseText = await analyzeDrawingImages(anthropic, conversion.images, projectName)
+        } else {
+          // Fallback: try document type anyway
+          console.log('PDF conversion failed, trying document type...')
+          try {
+            const content = [
+              {
+                type: 'document',
+                source: {
+                  type: 'base64',
+                  media_type: 'application/pdf',
+                  data: fileData.base64
+                }
+              },
+              {
+                type: 'text',
+                text: `Analyze these construction drawings for "${projectName || 'Unknown Project'}". Extract all bid items by CSI division. Return JSON with drawing_info, bid_items array, and summary.`
+              }
+            ]
+
+            const message = await anthropic.messages.create({
+              model: CLAUDE_MODEL,
+              max_tokens: 8192,
+              system: 'Expert construction estimator. Return only valid JSON.',
+              messages: [{ role: 'user', content }]
+            })
+            responseText = message.content[0].text
+          } catch (pdfError) {
+            console.error('PDF document type also failed:', pdfError.message)
+            analysis = {
+              drawing_info: {},
+              bid_items: [],
+              summary: `PDF processing failed: ${pdfError.message}. Try uploading individual page images instead.`,
+              error: pdfError.message
+            }
+          }
         }
-        if (analysis.raw_response) {
-          console.log('AI returned raw_response (parsing may have failed)')
+      } else if (fileType && fileType.startsWith('image/')) {
+        // Direct image analysis
+        responseText = await analyzeImageFile(anthropic, fileData, fileType, projectName)
+      } else {
+        console.log('Unsupported file type:', fileType)
+        analysis = {
+          drawing_info: {},
+          bid_items: [],
+          summary: `Unsupported file type: ${fileType}`
         }
-      } catch (aiError) {
-        console.error('AI analysis error:', aiError.message)
-        console.error('AI error stack:', aiError.stack)
-        analysis = { drawing_info: {}, bid_items: [], error: aiError.message }
       }
-    } else if (!anthropic) {
-      console.log('Anthropic not configured, skipping AI analysis')
+
+      if (responseText) {
+        analysis = parseAnalysisResponse(responseText)
+      }
     }
 
-    // Get trades for bid item mapping
+    // Get trades for mapping
     const { data: trades } = await supabase.from('trades').select('id, division_code, name')
 
     // Save drawing record
@@ -517,6 +614,8 @@ export async function handler(event) {
       )
     }
 
+    console.log(`Complete: ${savedBidItems.length} bid items saved`)
+
     return {
       statusCode: 200,
       headers,
@@ -528,7 +627,7 @@ export async function handler(event) {
         bid_items_extracted: analysis.bid_items?.length || 0,
         bid_items_created: savedBidItems.length,
         summary: analysis.summary,
-        parse_error: analysis.raw_response ? 'JSON parsing failed - check logs' : null
+        error: analysis.error || null
       })
     }
 
