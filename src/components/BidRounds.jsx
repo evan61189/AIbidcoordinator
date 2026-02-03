@@ -33,9 +33,18 @@ async function convertPdfToImages(pdfFile, maxPages = 100) {
   const arrayBuffer = await pdfFile.arrayBuffer()
   console.log('PDF file read, size:', arrayBuffer.byteLength)
 
-  const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise
-  const numPages = Math.min(pdf.numPages, maxPages)
+  let pdf
+  try {
+    console.log('Loading PDF document...')
+    const loadingTask = pdfjs.getDocument({ data: arrayBuffer })
+    pdf = await loadingTask.promise
+    console.log('PDF document loaded successfully')
+  } catch (loadError) {
+    console.error('Failed to load PDF document:', loadError)
+    throw new Error(`Failed to parse PDF: ${loadError.message}`)
+  }
 
+  const numPages = Math.min(pdf.numPages, maxPages)
   console.log(`Converting PDF: ${pdf.numPages} total pages, processing ${numPages}`)
 
   const images = []
