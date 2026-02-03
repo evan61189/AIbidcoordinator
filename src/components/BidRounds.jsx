@@ -22,10 +22,49 @@ async function loadPdfJs() {
 }
 
 /**
- * Convert a PDF file to an array of PNG images (as Blobs) using browser canvas
+ * Convert a single PDF page to an image
  */
-async function convertPdfToImages(pdfFile, maxPages = 100) {
-  console.log('Starting PDF conversion for:', pdfFile.name)
+async function convertPdfPageToImage(pdf, pageNum, pdfFileName) {
+  const page = await pdf.getPage(pageNum)
+
+  // Use scale 1.0 to reduce memory usage
+  const scale = 1.0
+  const viewport = page.getViewport({ scale })
+
+  // Create canvas
+  const canvas = document.createElement('canvas')
+  canvas.width = viewport.width
+  canvas.height = viewport.height
+  const context = canvas.getContext('2d')
+
+  // Render page to canvas
+  await page.render({
+    canvasContext: context,
+    viewport: viewport
+  }).promise
+
+  // Convert to blob (JPEG for smaller size)
+  const blob = await new Promise(resolve => {
+    canvas.toBlob(resolve, 'image/jpeg', 0.8)
+  })
+
+  // Clean up immediately to free memory
+  canvas.width = 0
+  canvas.height = 0
+  page.cleanup()
+
+  return {
+    blob,
+    pageNum,
+    name: `${pdfFileName.replace('.pdf', '').replace(/[^a-zA-Z0-9-_]/g, '_')}_page_${pageNum}.jpg`
+  }
+}
+
+/**
+ * Load a PDF and return the document and page count
+ */
+async function loadPdfDocument(pdfFile) {
+  console.log('Starting PDF load for:', pdfFile.name)
 
   const pdfjs = await loadPdfJs()
   console.log('PDF.js library loaded')
@@ -33,68 +72,12 @@ async function convertPdfToImages(pdfFile, maxPages = 100) {
   const arrayBuffer = await pdfFile.arrayBuffer()
   console.log('PDF file read, size:', arrayBuffer.byteLength)
 
-  let pdf
-  try {
-    console.log('Loading PDF document...')
-    const loadingTask = pdfjs.getDocument({ data: arrayBuffer })
-    pdf = await loadingTask.promise
-    console.log('PDF document loaded successfully')
-  } catch (loadError) {
-    console.error('Failed to load PDF document:', loadError)
-    throw new Error(`Failed to parse PDF: ${loadError.message}`)
-  }
+  console.log('Loading PDF document...')
+  const loadingTask = pdfjs.getDocument({ data: arrayBuffer })
+  const pdf = await loadingTask.promise
+  console.log('PDF document loaded:', pdf.numPages, 'pages')
 
-  const numPages = Math.min(pdf.numPages, maxPages)
-  console.log(`Converting PDF: ${pdf.numPages} total pages, processing ${numPages}`)
-
-  const images = []
-
-  for (let pageNum = 1; pageNum <= numPages; pageNum++) {
-    try {
-      console.log(`Rendering page ${pageNum}/${numPages}...`)
-      const page = await pdf.getPage(pageNum)
-
-      // Use scale 1.0 to reduce memory usage for large PDFs
-      const scale = 1.0
-      const viewport = page.getViewport({ scale })
-
-      // Create canvas
-      const canvas = document.createElement('canvas')
-      canvas.width = viewport.width
-      canvas.height = viewport.height
-      const context = canvas.getContext('2d')
-
-      // Render page to canvas
-      await page.render({
-        canvasContext: context,
-        viewport: viewport
-      }).promise
-
-      // Convert to blob (JPEG for smaller size)
-      const blob = await new Promise(resolve => {
-        canvas.toBlob(resolve, 'image/jpeg', 0.85)
-      })
-
-      images.push({
-        blob,
-        pageNum,
-        name: `${pdfFile.name.replace('.pdf', '')}_page_${pageNum}.jpg`
-      })
-
-      // Clean up to free memory
-      canvas.width = 0
-      canvas.height = 0
-      page.cleanup()
-
-      console.log(`Page ${pageNum} converted, blob size: ${blob.size}`)
-    } catch (pageError) {
-      console.error(`Error rendering page ${pageNum}:`, pageError)
-      // Continue with other pages
-    }
-  }
-
-  console.log(`PDF conversion complete: ${images.length} pages converted`)
-  return images
+  return pdf
 }
 
 /**
@@ -420,53 +403,68 @@ export default function BidRounds({ projectId, projectName }) {
         const file = files[i]
         console.log('Processing file:', file.name, 'type:', file.type)
 
-        // Check if file is a PDF - convert to images first
+        // Check if file is a PDF - process pages one at a time to avoid memory issues
         if (file.type === 'application/pdf') {
-          setUploadProgress({
-            current: i + 1,
-            total: files.length,
-            filename: file.name,
-            phase: 'converting PDF to images'
-          })
-
-          toast.loading(`Converting PDF pages to images...`, { id: 'pdf-convert' })
-
+          let pdf
           try {
-            // Convert PDF to images in browser
-            const images = await convertPdfToImages(file) // Uses default max of 100 pages
-            toast.dismiss('pdf-convert')
+            setUploadProgress({
+              current: i + 1,
+              total: files.length,
+              filename: file.name,
+              phase: 'loading PDF'
+            })
 
-            console.log(`Converted ${images.length} pages from ${file.name}`)
+            pdf = await loadPdfDocument(file)
+            const numPages = Math.min(pdf.numPages, 100) // Max 100 pages
 
-            // Process each page image
-            for (let j = 0; j < images.length; j++) {
-              const img = images[j]
+            // Process each page one at a time (convert, upload, free memory)
+            for (let pageNum = 1; pageNum <= numPages; pageNum++) {
               setUploadProgress({
                 current: i + 1,
                 total: files.length,
-                filename: `${file.name} (page ${img.pageNum}/${images.length})`,
-                phase: 'processing with AI'
+                filename: `${file.name} (page ${pageNum}/${numPages})`,
+                phase: 'converting page'
               })
 
-              // Create a File object from the blob
-              const imageFile = new File([img.blob], img.name, { type: 'image/jpeg' })
+              try {
+                // Convert single page
+                console.log(`Converting page ${pageNum}/${numPages}...`)
+                const img = await convertPdfPageToImage(pdf, pageNum, file.name)
+                console.log(`Page ${pageNum} converted, size: ${img.blob.size}`)
 
-              const result = await processAndUploadImage(imageFile, roundId, file.name)
+                // Update status
+                setUploadProgress({
+                  current: i + 1,
+                  total: files.length,
+                  filename: `${file.name} (page ${pageNum}/${numPages})`,
+                  phase: 'processing with AI'
+                })
 
-              // Track bid items
-              const created = result.bid_items_created || 0
-              totalBidItemsCreated += created
-              totalPagesProcessed++
+                // Create File object and upload
+                const imageFile = new File([img.blob], img.name, { type: 'image/jpeg' })
+                const result = await processAndUploadImage(imageFile, roundId, file.name)
 
-              console.log(`Processed page ${img.pageNum}:`, {
-                created,
-                summary: result.summary
-              })
+                // Track bid items
+                const created = result.bid_items_created || 0
+                totalBidItemsCreated += created
+                totalPagesProcessed++
+
+                console.log(`Page ${pageNum} processed:`, { created, summary: result.summary })
+
+                // Force garbage collection hint
+                img.blob = null
+              } catch (pageError) {
+                console.error(`Error processing page ${pageNum}:`, pageError)
+                // Continue with next page
+              }
             }
+
+            // Clean up PDF
+            pdf.destroy()
           } catch (pdfError) {
-            toast.dismiss('pdf-convert')
-            console.error('PDF conversion error:', pdfError)
-            toast.error(`Failed to convert PDF: ${pdfError.message}`)
+            console.error('PDF error:', pdfError)
+            toast.error(`Failed to process PDF: ${pdfError.message}`)
+            if (pdf) pdf.destroy()
             continue
           }
         } else {
