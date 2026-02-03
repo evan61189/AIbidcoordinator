@@ -354,38 +354,57 @@ export default function BidRounds({ projectId, projectName }) {
     const storageResult = await uploadToSupabaseStorage(imageFile, roundId)
     console.log(`Uploaded ${imageFile.name} to storage:`, storageResult.storagePath)
 
-    // Call function to process the uploaded file
-    const response = await fetch('/.netlify/functions/process-uploaded-drawing', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        project_id: projectId,
-        bid_round_id: roundId,
-        project_name: projectName,
-        storage_path: storageResult.storagePath,
-        storage_url: storageResult.storageUrl,
-        original_filename: originalPdfName || imageFile.name,
-        file_type: imageFile.type,
-        file_size: imageFile.size,
-        process_with_ai: true
-      })
-    })
+    // Call function to process the uploaded file with retry logic
+    let lastError
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const response = await fetch('/.netlify/functions/process-uploaded-drawing', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            project_id: projectId,
+            bid_round_id: roundId,
+            project_name: projectName,
+            storage_path: storageResult.storagePath,
+            storage_url: storageResult.storageUrl,
+            original_filename: originalPdfName || imageFile.name,
+            file_type: imageFile.type,
+            file_size: imageFile.size,
+            process_with_ai: true
+          })
+        })
 
-    const contentType = response.headers.get('content-type')
-    let result
-    if (contentType && contentType.includes('application/json')) {
-      result = await response.json()
-    } else {
-      const responseText = await response.text()
-      console.error('Non-JSON response:', responseText.substring(0, 500))
-      throw new Error('Server returned an invalid response.')
+        const contentType = response.headers.get('content-type')
+        let result
+        if (contentType && contentType.includes('application/json')) {
+          result = await response.json()
+        } else {
+          const responseText = await response.text()
+          console.error('Non-JSON response:', responseText.substring(0, 500))
+          throw new Error('Server returned an invalid response.')
+        }
+
+        if (!response.ok) {
+          throw new Error(result.details || result.error || 'Processing failed')
+        }
+
+        return result
+      } catch (error) {
+        lastError = error
+        console.warn(`Attempt ${attempt} failed:`, error.message)
+        if (attempt < 3) {
+          // Wait before retry (2s, 4s)
+          await new Promise(r => setTimeout(r, attempt * 2000))
+        }
+      }
     }
 
-    if (!response.ok) {
-      throw new Error(result.details || result.error || 'Processing failed')
-    }
+    throw lastError
+  }
 
-    return result
+  // Helper to add delay between operations
+  function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms))
   }
 
   async function handleDrawingUpload(roundId, files) {
@@ -453,9 +472,15 @@ export default function BidRounds({ projectId, projectName }) {
 
                 // Force garbage collection hint
                 img.blob = null
+
+                // Small delay between pages to avoid network overload
+                if (pageNum < numPages) {
+                  await delay(500)
+                }
               } catch (pageError) {
                 console.error(`Error processing page ${pageNum}:`, pageError)
-                // Continue with next page
+                // Continue with next page after a brief pause
+                await delay(1000)
               }
             }
 
