@@ -376,7 +376,7 @@ export default function ProjectDetail() {
 
                 {expandedTrades[trade.id] && (
                   <div className="bg-gray-50 border-t border-gray-100">
-                    <table className="table">
+                    <table className="table table-fixed w-full">
                       <thead>
                         <tr>
                           <th className="w-10">
@@ -393,8 +393,8 @@ export default function ProjectDetail() {
                               className="rounded"
                             />
                           </th>
-                          <th>Item</th>
-                          <th>Description</th>
+                          <th className="w-20">Item</th>
+                          <th className="w-1/2">Description</th>
                           <th>Est. Cost</th>
                           <th>Bids</th>
                           <th>Lowest</th>
@@ -421,7 +421,7 @@ export default function ProjectDetail() {
                                 />
                               </td>
                               <td className="font-medium">{item.item_number || '-'}</td>
-                              <td className="max-w-md whitespace-normal">{item.description}</td>
+                              <td className="whitespace-normal break-words">{item.description}</td>
                               <td>
                                 {item.estimated_cost
                                   ? `$${Number(item.estimated_cost).toLocaleString()}`

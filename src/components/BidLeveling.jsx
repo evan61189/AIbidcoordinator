@@ -397,20 +397,20 @@ export default function BidLeveling({ projectId, projectName }) {
                     {bid.subcontractor?.company_name || 'Unknown'}
                   </div>
                   {bid.line_items && bid.line_items.length > 0 ? (
-                    <table className="w-full text-sm">
+                    <table className="w-full text-sm table-fixed">
                       <thead>
                         <tr className="border-b">
                           <th className="text-left py-2 w-1/2">Description</th>
-                          <th className="text-left py-2">Trade</th>
-                          <th className="text-right py-2">Qty</th>
-                          <th className="text-right py-2">Unit Price</th>
-                          <th className="text-right py-2">Total</th>
+                          <th className="text-left py-2 w-24">Trade</th>
+                          <th className="text-right py-2 w-20">Qty</th>
+                          <th className="text-right py-2 w-24">Unit Price</th>
+                          <th className="text-right py-2 w-24">Total</th>
                         </tr>
                       </thead>
                       <tbody>
                         {bid.line_items.map((item, idx) => (
                           <tr key={idx} className="border-b border-gray-200 align-top">
-                            <td className="py-2 pr-4 whitespace-normal">{item.description}</td>
+                            <td className="py-2 pr-4 whitespace-normal break-words">{item.description}</td>
                             <td className="py-2 text-gray-600">{item.trade || '-'}</td>
                             <td className="py-2 text-right">{item.quantity} {item.unit}</td>
                             <td className="py-2 text-right">{formatCurrency(item.unit_price)}</td>
