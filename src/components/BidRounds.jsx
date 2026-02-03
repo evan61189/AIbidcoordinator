@@ -17,7 +17,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker
 /**
  * Convert a PDF file to an array of PNG images (as Blobs) using browser canvas
  */
-async function convertPdfToImages(pdfFile, maxPages = 20) {
+async function convertPdfToImages(pdfFile, maxPages = 100) {
   const arrayBuffer = await pdfFile.arrayBuffer()
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
   const numPages = Math.min(pdf.numPages, maxPages)
@@ -394,7 +394,7 @@ export default function BidRounds({ projectId, projectName }) {
 
           try {
             // Convert PDF to images in browser
-            const images = await convertPdfToImages(file, 20) // Max 20 pages
+            const images = await convertPdfToImages(file) // Uses default max of 100 pages
             toast.dismiss('pdf-convert')
 
             console.log(`Converted ${images.length} pages from ${file.name}`)
@@ -453,10 +453,41 @@ export default function BidRounds({ projectId, projectName }) {
         }
       }
 
+      // Consolidate duplicate bid items
+      if (totalBidItemsCreated > 0) {
+        setUploadProgress({
+          current: files.length,
+          total: files.length,
+          filename: 'Consolidating duplicates...',
+          phase: 'deduplicating'
+        })
+
+        try {
+          const consolidateResponse = await fetch('/.netlify/functions/consolidate-bid-items', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bid_round_id: roundId })
+          })
+
+          if (consolidateResponse.ok) {
+            const consolidateResult = await consolidateResponse.json()
+            console.log('Consolidation result:', consolidateResult)
+
+            if (consolidateResult.removed_count > 0) {
+              totalBidItemsCreated = consolidateResult.final_count
+              console.log(`Removed ${consolidateResult.removed_count} duplicate items`)
+            }
+          }
+        } catch (consolidateError) {
+          console.error('Consolidation error:', consolidateError)
+          // Don't fail the upload if consolidation fails
+        }
+      }
+
       // Show success message
       let bidItemsMsg
       if (totalBidItemsCreated > 0) {
-        bidItemsMsg = ` and extracted ${totalBidItemsCreated} bid item(s) from ${totalPagesProcessed} page(s)`
+        bidItemsMsg = ` and extracted ${totalBidItemsCreated} unique bid item(s) from ${totalPagesProcessed} page(s)`
       } else {
         bidItemsMsg = ` (${totalPagesProcessed} page(s) processed, no bid items extracted)`
       }
