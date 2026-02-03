@@ -372,7 +372,12 @@ ${sender_name || 'The Project Team'}
         email: sender_email || process.env.SENDGRID_FROM_EMAIL || 'noreply@bidcoordinator.com',
         name: sender_name || sender_company || 'BidCoordinator'
       },
-      reply_to: sender_email ? { email: sender_email, name: sender_name } : undefined,
+      // Use inbound parse email if configured, otherwise fall back to sender email
+      reply_to: process.env.SENDGRID_INBOUND_EMAIL
+        ? { email: process.env.SENDGRID_INBOUND_EMAIL, name: sender_name || sender_company || 'Clipper Construction Bids' }
+        : sender_email
+          ? { email: sender_email, name: sender_name }
+          : undefined,
       content: [
         { type: 'text/plain', value: textContent },
         { type: 'text/html', value: htmlContent }
