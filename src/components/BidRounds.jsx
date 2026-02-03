@@ -17,7 +17,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker
 /**
  * Convert a PDF file to an array of PNG images (as Blobs) using browser canvas
  */
-async function convertPdfToImages(pdfFile, maxPages = 20) {
+async function convertPdfToImages(pdfFile, maxPages = 100) {
   const arrayBuffer = await pdfFile.arrayBuffer()
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
   const numPages = Math.min(pdf.numPages, maxPages)
@@ -394,7 +394,7 @@ export default function BidRounds({ projectId, projectName }) {
 
           try {
             // Convert PDF to images in browser
-            const images = await convertPdfToImages(file, 20) // Max 20 pages
+            const images = await convertPdfToImages(file) // Uses default max of 100 pages
             toast.dismiss('pdf-convert')
 
             console.log(`Converted ${images.length} pages from ${file.name}`)
