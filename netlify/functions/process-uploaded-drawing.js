@@ -91,13 +91,40 @@ async function analyzeDrawing(anthropic, fileData, mimeType, projectName, drawin
 
   content.push({
     type: 'text',
-    text: `Analyze this construction drawing${projectName ? ` for "${projectName}"` : ''}${drawingType ? ` (${drawingType})` : ''}.
+    text: `You are analyzing construction drawings${projectName ? ` for the project "${projectName}"` : ''}${drawingType ? ` (${drawingType} drawings)` : ''}.
 
-Extract:
-1. Drawing information (sheet number, title, discipline, revision)
-2. Bid items by CSI division
+Your task is to extract ALL bid items/scope items that a general contractor would need to solicit from subcontractors. Be thorough and comprehensive.
 
-Return JSON:
+For each sheet/page in the document, identify:
+1. Drawing information (sheet number, title, discipline)
+2. ALL work items that need to be bid by trade
+
+CSI MasterFormat Division Codes:
+- 01: General Requirements
+- 02: Existing Conditions (demo, abatement)
+- 03: Concrete
+- 04: Masonry
+- 05: Metals (structural steel, misc metals)
+- 06: Wood/Plastics/Composites (rough carpentry, finish carpentry, casework)
+- 07: Thermal/Moisture Protection (roofing, insulation, waterproofing)
+- 08: Openings (doors, windows, hardware, glazing)
+- 09: Finishes (drywall, paint, flooring, ceilings, tile)
+- 10: Specialties (toilet accessories, signage, lockers)
+- 11: Equipment (kitchen equipment, lab equipment)
+- 12: Furnishings (furniture, window treatments)
+- 13: Special Construction
+- 14: Conveying Equipment (elevators)
+- 21: Fire Suppression
+- 22: Plumbing
+- 23: HVAC
+- 26: Electrical
+- 27: Communications
+- 28: Electronic Safety/Security
+- 31: Earthwork
+- 32: Exterior Improvements (paving, landscaping)
+- 33: Utilities
+
+Return a JSON object with this EXACT structure:
 {
   "drawing_info": {
     "sheet_number": "A1.01",
@@ -111,22 +138,38 @@ Return JSON:
     {
       "division_code": "09",
       "trade_name": "Finishes",
-      "description": "Description of work item",
-      "quantity": "Qty or TBD",
-      "unit": "SF/LF/EA/LS",
-      "notes": "Special notes",
+      "description": "Gypsum board partitions - full height to deck",
+      "quantity": "Approx 2,500 LF",
+      "unit": "LF",
+      "notes": "Include acoustic insulation at rated walls",
       "confidence": 0.85
+    },
+    {
+      "division_code": "09",
+      "trade_name": "Finishes",
+      "description": "Level 5 finish at all GWB surfaces",
+      "quantity": "TBD",
+      "unit": "SF",
+      "notes": "",
+      "confidence": 0.8
     }
   ],
-  "summary": "Brief description of what this drawing shows"
-}`
+  "summary": "First floor architectural plan showing office layout with conference rooms, open office areas, and support spaces."
+}
+
+IMPORTANT:
+- Extract MULTIPLE bid items - most drawings have 5-20+ items
+- Be specific in descriptions (e.g., "hollow metal door frames" not just "doors")
+- Include quantities when visible or estimable
+- Group related items appropriately
+- Include ALL trades visible in the drawings`
   })
 
   console.log('Calling Claude API for analysis...')
   const message = await anthropic.messages.create({
     model: CLAUDE_MODEL,
-    max_tokens: 4096,
-    system: 'You are an expert construction estimator. Analyze drawings and extract bid items by CSI MasterFormat. Return only valid JSON.',
+    max_tokens: 8192,
+    system: 'You are an expert construction estimator and bid coordinator. Your job is to analyze construction drawings and extract comprehensive bid items organized by CSI MasterFormat divisions. Be thorough - extract ALL scope items visible in the drawings. Return only valid JSON.',
     messages: [{ role: 'user', content }]
   })
 

@@ -3,7 +3,8 @@ import { supabase } from '../lib/supabase'
 import {
   Layers, Plus, Upload, FileText, ChevronDown, ChevronRight,
   Calendar, Clock, DollarSign, Users, RefreshCw, Check, X,
-  ArrowRight, TrendingUp, TrendingDown, Minus, Download, Eye, Edit, Save
+  ArrowRight, TrendingUp, TrendingDown, Minus, Download, Eye, Edit, Save,
+  Trash2, ExternalLink
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import BidLeveling from './BidLeveling'
@@ -21,6 +22,9 @@ export default function BidRounds({ projectId, projectName }) {
   const [uploadProgress, setUploadProgress] = useState(null)
   const [editingRoundId, setEditingRoundId] = useState(null)
   const [editingRoundName, setEditingRoundName] = useState('')
+  const [viewingDrawingsRoundId, setViewingDrawingsRoundId] = useState(null)
+  const [roundDrawings, setRoundDrawings] = useState([])
+  const [loadingDrawings, setLoadingDrawings] = useState(false)
   const fileInputRef = useRef(null)
 
   useEffect(() => {
@@ -181,6 +185,66 @@ export default function BidRounds({ projectId, projectName }) {
     updateRoundName(roundId, editingRoundName)
   }
 
+  async function loadDrawingsForRound(roundId) {
+    setLoadingDrawings(true)
+    try {
+      const { data, error } = await supabase
+        .from('drawings')
+        .select('*')
+        .eq('bid_round_id', roundId)
+        .order('uploaded_at', { ascending: false })
+
+      if (error) throw error
+      setRoundDrawings(data || [])
+    } catch (error) {
+      console.error('Error loading drawings:', error)
+      toast.error('Failed to load drawings')
+    } finally {
+      setLoadingDrawings(false)
+    }
+  }
+
+  function openViewDrawings(roundId) {
+    setViewingDrawingsRoundId(roundId)
+    loadDrawingsForRound(roundId)
+  }
+
+  async function deleteDrawing(drawingId, storagePath) {
+    if (!confirm('Are you sure you want to delete this drawing? This will also delete any bid items extracted from it.')) {
+      return
+    }
+
+    try {
+      // Delete associated bid items first
+      await supabase
+        .from('bid_items')
+        .delete()
+        .eq('source_drawing_id', drawingId)
+
+      // Delete the drawing record
+      const { error: dbError } = await supabase
+        .from('drawings')
+        .delete()
+        .eq('id', drawingId)
+
+      if (dbError) throw dbError
+
+      // Try to delete from storage (may fail if path doesn't exist)
+      if (storagePath) {
+        await supabase.storage
+          .from('drawings')
+          .remove([storagePath])
+      }
+
+      toast.success('Drawing deleted')
+      loadDrawingsForRound(viewingDrawingsRoundId)
+      loadRounds() // Refresh counts
+    } catch (error) {
+      console.error('Error deleting drawing:', error)
+      toast.error('Failed to delete drawing')
+    }
+  }
+
   // Maximum file size for direct function upload (smaller files go directly to function)
   const MAX_DIRECT_UPLOAD_SIZE = 800 * 1024 // 800KB - stay under Netlify's 1MB limit with some buffer
 
@@ -218,7 +282,6 @@ export default function BidRounds({ projectId, projectName }) {
     if (!files || files.length === 0) return
 
     // Validate file sizes and warn about large files
-    const totalSize = files.reduce((sum, f) => sum + f.size, 0)
     const largeFiles = files.filter(f => f.size > MAX_DIRECT_UPLOAD_SIZE)
 
     if (largeFiles.length > 0) {
@@ -228,6 +291,8 @@ export default function BidRounds({ projectId, projectName }) {
 
     setUploadingDrawings(true)
     setUploadProgress({ current: 0, total: files.length })
+
+    let totalBidItemsCreated = 0
 
     try {
       for (let i = 0; i < files.length; i++) {
@@ -301,10 +366,24 @@ export default function BidRounds({ projectId, projectName }) {
           }
         }
 
+        // Track bid items created
+        if (result.bid_items_created) {
+          totalBidItemsCreated += result.bid_items_created
+        }
+        // Handle both single file and batch responses
+        if (result.results) {
+          result.results.forEach(r => {
+            if (r.bid_items_created) totalBidItemsCreated += r.bid_items_created
+          })
+        }
+
         console.log(`Processed ${file.name}:`, result)
       }
 
-      toast.success(`Uploaded ${files.length} drawing(s)`)
+      const bidItemsMsg = totalBidItemsCreated > 0
+        ? ` and extracted ${totalBidItemsCreated} bid item(s)`
+        : ' (no bid items extracted - check drawings have visible scope)'
+      toast.success(`Uploaded ${files.length} drawing(s)${bidItemsMsg}`)
       loadRounds()
     } catch (error) {
       console.error('Upload error:', error)
@@ -493,11 +572,11 @@ export default function BidRounds({ projectId, projectName }) {
                         {uploadingDrawings ? 'Uploading...' : 'Upload Drawings'}
                       </button>
                       <button
-                        onClick={() => {/* View drawings */}}
+                        onClick={() => openViewDrawings(round.id)}
                         className="flex items-center gap-1 px-3 py-1.5 text-sm bg-white border rounded hover:bg-gray-50"
                       >
                         <Eye className="w-4 h-4" />
-                        View Drawings
+                        View Drawings ({round.drawings?.[0]?.count || 0})
                       </button>
                     </div>
 
@@ -570,6 +649,104 @@ export default function BidRounds({ projectId, projectName }) {
           onClose={() => setShowNewRoundModal(false)}
           onSubmit={createNewRound}
         />
+      )}
+
+      {/* View Drawings Modal */}
+      {viewingDrawingsRoundId && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[80vh] flex flex-col">
+            <div className="px-6 py-4 border-b flex items-center justify-between">
+              <h2 className="text-lg font-semibold">
+                Drawings for {rounds.find(r => r.id === viewingDrawingsRoundId)?.name}
+              </h2>
+              <button
+                onClick={() => setViewingDrawingsRoundId(null)}
+                className="p-1 hover:bg-gray-100 rounded"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6 overflow-y-auto flex-1">
+              {loadingDrawings ? (
+                <div className="flex items-center justify-center gap-2 text-gray-500 py-8">
+                  <RefreshCw className="w-5 h-5 animate-spin" />
+                  Loading drawings...
+                </div>
+              ) : roundDrawings.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <FileText className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                  <p>No drawings uploaded yet</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {roundDrawings.map((drawing) => (
+                    <div
+                      key={drawing.id}
+                      className="border rounded-lg p-4 flex items-center justify-between hover:bg-gray-50"
+                    >
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <FileText className="w-8 h-8 text-gray-400 flex-shrink-0" />
+                        <div className="min-w-0">
+                          <div className="font-medium text-gray-900 truncate">
+                            {drawing.original_filename || drawing.filename}
+                          </div>
+                          <div className="text-sm text-gray-500 flex items-center gap-2 flex-wrap">
+                            {drawing.drawing_number && (
+                              <span className="bg-gray-100 px-2 py-0.5 rounded text-xs">
+                                {drawing.drawing_number}
+                              </span>
+                            )}
+                            {drawing.title && <span className="truncate">{drawing.title}</span>}
+                            {drawing.discipline && (
+                              <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs">
+                                {drawing.discipline}
+                              </span>
+                            )}
+                            <span className="text-gray-400">
+                              {drawing.file_size ? `${(drawing.file_size / 1024).toFixed(0)} KB` : ''}
+                            </span>
+                          </div>
+                          <div className="text-xs text-gray-400 mt-1">
+                            Uploaded {new Date(drawing.uploaded_at).toLocaleDateString()}
+                            {drawing.ai_processed && ' • AI processed'}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0 ml-4">
+                        {drawing.storage_url && (
+                          <a
+                            href={drawing.storage_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-2 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded"
+                            title="Open in new tab"
+                          >
+                            <ExternalLink className="w-4 h-4" />
+                          </a>
+                        )}
+                        <button
+                          onClick={() => deleteDrawing(drawing.id, drawing.storage_path)}
+                          className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded"
+                          title="Delete drawing"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="px-6 py-4 border-t bg-gray-50">
+              <button
+                onClick={() => setViewingDrawingsRoundId(null)}
+                className="w-full px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
