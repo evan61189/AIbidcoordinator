@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { DollarSign, Search, Filter, Zap, RefreshCw, Mail } from 'lucide-react'
-import { fetchBids, fetchProjects, updateBid } from '../lib/supabase'
+import { DollarSign, Search, Filter, Zap, RefreshCw, Mail, Trash2, CheckSquare, Square } from 'lucide-react'
+import { fetchBids, fetchProjects, updateBid, deleteBids, fetchDrawingsForProject } from '../lib/supabase'
 import { format } from 'date-fns'
 
 export default function Bids() {
@@ -12,6 +12,8 @@ export default function Bids() {
   const [projectFilter, setProjectFilter] = useState('all')
   const [searchTerm, setSearchTerm] = useState('')
   const [resendingId, setResendingId] = useState(null)
+  const [selectedBids, setSelectedBids] = useState(new Set())
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
     loadData()
@@ -26,6 +28,7 @@ export default function Bids() {
       ])
       setBids(bidsData || [])
       setProjects(projectsData || [])
+      setSelectedBids(new Set()) // Clear selection on reload
     } catch (error) {
       console.error('Error loading bids:', error)
     } finally {
@@ -33,53 +36,148 @@ export default function Bids() {
     }
   }
 
-  async function resendInvitation(bid) {
-    if (!bid.subcontractor?.email) {
-      alert('No email address found for this subcontractor')
+  // Group bids by subcontractor + project for combined resend
+  function groupBidsForResend(bidIds) {
+    const groups = {}
+    for (const bidId of bidIds) {
+      const bid = bids.find(b => b.id === bidId)
+      if (!bid || bid.status !== 'invited') continue
+
+      const key = `${bid.subcontractor?.id}-${bid.bid_item?.project?.id}`
+      if (!groups[key]) {
+        groups[key] = {
+          subcontractor: bid.subcontractor,
+          project: bid.bid_item?.project,
+          bids: []
+        }
+      }
+      groups[key].bids.push(bid)
+    }
+    return Object.values(groups)
+  }
+
+  async function resendInvitations(bidIds) {
+    const groups = groupBidsForResend(bidIds)
+
+    if (groups.length === 0) {
+      alert('No invited bids selected to resend')
       return
     }
 
-    setResendingId(bid.id)
-    try {
-      const response = await fetch('/api/send-bid-invitation', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          to_email: bid.subcontractor.email,
-          to_name: bid.subcontractor.contact_name || bid.subcontractor.company_name,
-          subject: `Invitation to Bid: ${bid.bid_item?.project?.name}`,
-          project_name: bid.bid_item?.project?.name,
-          project_location: bid.bid_item?.project?.location,
-          bid_due_date: bid.bid_item?.project?.bid_date,
-          bid_items: [{
-            trade: bid.bid_item?.trade?.name || 'General',
-            description: bid.bid_item?.description || '',
-            quantity: bid.bid_item?.quantity || '',
-            unit: bid.bid_item?.unit || ''
-          }],
-          sender_company: 'Clipper Construction',
-          project_id: bid.bid_item?.project?.id,
-          subcontractor_id: bid.subcontractor.id,
-          bid_item_ids: [bid.bid_item?.id].filter(Boolean)
-        })
-      })
+    setResendingId('bulk')
+    let successCount = 0
+    let errorCount = 0
 
-      const result = await response.json()
-      if (response.ok) {
-        // Update the invitation_sent_at timestamp
-        await updateBid(bid.id, {
-          invitation_sent_at: new Date().toISOString()
-        })
-        alert('Invitation resent successfully!')
-        loadData() // Refresh the list
-      } else {
-        alert(`Failed to send: ${result.error || 'Unknown error'}`)
+    for (const group of groups) {
+      if (!group.subcontractor?.email) {
+        console.log(`Skipping ${group.subcontractor?.company_name} - no email`)
+        errorCount++
+        continue
       }
+
+      try {
+        // Fetch drawings for this project
+        let drawingIds = []
+        if (group.project?.id) {
+          const drawings = await fetchDrawingsForProject(group.project.id)
+          drawingIds = drawings?.map(d => d.id) || []
+        }
+
+        // Combine all bid items for this sub/project
+        const bidItems = group.bids.map(bid => ({
+          trade: bid.bid_item?.trade?.name || 'General',
+          description: bid.bid_item?.description || '',
+          quantity: bid.bid_item?.quantity || '',
+          unit: bid.bid_item?.unit || ''
+        }))
+
+        const response = await fetch('/api/send-bid-invitation', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            to_email: group.subcontractor.email,
+            to_name: group.subcontractor.contact_name || group.subcontractor.company_name,
+            subject: `Invitation to Bid: ${group.project?.name}`,
+            project_name: group.project?.name,
+            project_location: group.project?.location,
+            bid_due_date: group.project?.bid_date,
+            bid_items: bidItems,
+            sender_company: 'Clipper Construction',
+            project_id: group.project?.id,
+            subcontractor_id: group.subcontractor.id,
+            bid_item_ids: group.bids.map(b => b.bid_item?.id).filter(Boolean),
+            drawing_ids: drawingIds,
+            include_drawing_links: true
+          })
+        })
+
+        const result = await response.json()
+        if (response.ok) {
+          // Update invitation_sent_at for all bids in this group
+          for (const bid of group.bids) {
+            await updateBid(bid.id, {
+              invitation_sent_at: new Date().toISOString()
+            })
+          }
+          successCount++
+        } else {
+          console.error(`Failed to send to ${group.subcontractor.email}:`, result.error)
+          errorCount++
+        }
+      } catch (error) {
+        console.error('Error resending invitation:', error)
+        errorCount++
+      }
+    }
+
+    setResendingId(null)
+
+    if (successCount > 0 && errorCount === 0) {
+      alert(`Successfully sent ${successCount} invitation(s) with all trades and drawings!`)
+    } else if (successCount > 0) {
+      alert(`Sent ${successCount} invitation(s), ${errorCount} failed`)
+    } else {
+      alert('Failed to send invitations. Please try again.')
+    }
+
+    loadData()
+  }
+
+  async function deleteSelectedBids() {
+    if (selectedBids.size === 0) return
+
+    if (!confirm(`Are you sure you want to delete ${selectedBids.size} bid invitation(s)? This cannot be undone.`)) {
+      return
+    }
+
+    setDeleting(true)
+    try {
+      await deleteBids(Array.from(selectedBids))
+      alert(`Deleted ${selectedBids.size} bid(s)`)
+      loadData()
     } catch (error) {
-      console.error('Error resending invitation:', error)
-      alert('Failed to resend invitation. Please try again.')
+      console.error('Error deleting bids:', error)
+      alert('Failed to delete bids. Please try again.')
     } finally {
-      setResendingId(null)
+      setDeleting(false)
+    }
+  }
+
+  function toggleSelectBid(bidId) {
+    const newSelected = new Set(selectedBids)
+    if (newSelected.has(bidId)) {
+      newSelected.delete(bidId)
+    } else {
+      newSelected.add(bidId)
+    }
+    setSelectedBids(newSelected)
+  }
+
+  function toggleSelectAll() {
+    if (selectedBids.size === filteredBids.length) {
+      setSelectedBids(new Set())
+    } else {
+      setSelectedBids(new Set(filteredBids.map(b => b.id)))
     }
   }
 
@@ -93,6 +191,12 @@ export default function Bids() {
 
     return matchesSearch && matchesProject
   })
+
+  // Count selected invited bids for resend button
+  const selectedInvitedCount = Array.from(selectedBids).filter(id => {
+    const bid = bids.find(b => b.id === id)
+    return bid?.status === 'invited'
+  }).length
 
   const statusColors = {
     invited: 'badge-warning',
@@ -155,6 +259,51 @@ export default function Bids() {
         </div>
       </div>
 
+      {/* Bulk Actions */}
+      {selectedBids.size > 0 && (
+        <div className="card p-4 bg-blue-50 border-blue-200">
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="text-blue-800 font-medium">
+              {selectedBids.size} bid(s) selected
+            </span>
+            <div className="flex gap-2">
+              {selectedInvitedCount > 0 && (
+                <button
+                  onClick={() => resendInvitations(Array.from(selectedBids))}
+                  disabled={resendingId === 'bulk'}
+                  className="btn btn-sm bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-1"
+                >
+                  {resendingId === 'bulk' ? (
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Mail className="h-4 w-4" />
+                  )}
+                  {resendingId === 'bulk' ? 'Sending...' : `Resend ${selectedInvitedCount} Invitation(s)`}
+                </button>
+              )}
+              <button
+                onClick={deleteSelectedBids}
+                disabled={deleting}
+                className="btn btn-sm bg-red-600 text-white hover:bg-red-700 flex items-center gap-1"
+              >
+                {deleting ? (
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Trash2 className="h-4 w-4" />
+                )}
+                {deleting ? 'Deleting...' : 'Delete Selected'}
+              </button>
+              <button
+                onClick={() => setSelectedBids(new Set())}
+                className="btn btn-sm bg-gray-200 text-gray-700 hover:bg-gray-300"
+              >
+                Clear Selection
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Bids Table */}
       {loading ? (
         <div className="flex items-center justify-center h-64">
@@ -165,6 +314,19 @@ export default function Bids() {
           <table className="table">
             <thead>
               <tr>
+                <th className="w-10">
+                  <button
+                    onClick={toggleSelectAll}
+                    className="p-1 hover:bg-gray-100 rounded"
+                    title={selectedBids.size === filteredBids.length ? "Deselect all" : "Select all"}
+                  >
+                    {selectedBids.size === filteredBids.length && filteredBids.length > 0 ? (
+                      <CheckSquare className="h-5 w-5 text-blue-600" />
+                    ) : (
+                      <Square className="h-5 w-5 text-gray-400" />
+                    )}
+                  </button>
+                </th>
                 <th>Subcontractor</th>
                 <th>Project</th>
                 <th>Description</th>
@@ -176,7 +338,19 @@ export default function Bids() {
             </thead>
             <tbody>
               {filteredBids.map(bid => (
-                <tr key={bid.id}>
+                <tr key={bid.id} className={selectedBids.has(bid.id) ? 'bg-blue-50' : ''}>
+                  <td>
+                    <button
+                      onClick={() => toggleSelectBid(bid.id)}
+                      className="p-1 hover:bg-gray-100 rounded"
+                    >
+                      {selectedBids.has(bid.id) ? (
+                        <CheckSquare className="h-5 w-5 text-blue-600" />
+                      ) : (
+                        <Square className="h-5 w-5 text-gray-400" />
+                      )}
+                    </button>
+                  </td>
                   <td>
                     <Link
                       to={`/subcontractors/${bid.subcontractor?.id}`}
@@ -214,17 +388,17 @@ export default function Bids() {
                   <td>
                     {bid.status === 'invited' && (
                       <button
-                        onClick={() => resendInvitation(bid)}
-                        disabled={resendingId === bid.id}
+                        onClick={() => resendInvitations([bid.id])}
+                        disabled={resendingId !== null}
                         className="btn btn-sm bg-blue-50 text-blue-600 hover:bg-blue-100 flex items-center gap-1"
-                        title="Resend invitation email"
+                        title="Resend invitation email with all trades and drawings"
                       >
-                        {resendingId === bid.id ? (
+                        {resendingId === 'bulk' ? (
                           <RefreshCw className="h-3 w-3 animate-spin" />
                         ) : (
                           <Mail className="h-3 w-3" />
                         )}
-                        {resendingId === bid.id ? 'Sending...' : 'Resend'}
+                        Resend
                       </button>
                     )}
                   </td>

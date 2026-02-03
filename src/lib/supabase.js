@@ -240,6 +240,16 @@ export async function updateBid(id, updates) {
   return data
 }
 
+export async function deleteBids(ids) {
+  const { error } = await supabase
+    .from('bids')
+    .delete()
+    .in('id', ids)
+
+  if (error) throw error
+  return true
+}
+
 export async function fetchBids(filters = {}) {
   let query = supabase
     .from('bids')
@@ -263,6 +273,18 @@ export async function fetchBids(filters = {}) {
   }
 
   const { data, error } = await query
+  if (error) throw error
+  return data
+}
+
+export async function fetchDrawingsForProject(projectId) {
+  const { data, error } = await supabase
+    .from('drawings')
+    .select('*')
+    .eq('project_id', projectId)
+    .eq('is_current', true)
+    .order('created_at', { ascending: false })
+
   if (error) throw error
   return data
 }
