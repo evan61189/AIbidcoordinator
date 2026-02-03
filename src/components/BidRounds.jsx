@@ -8,18 +8,24 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import BidLeveling from './BidLeveling'
-import * as pdfjsLib from 'pdfjs-dist'
-import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 
-// Set up PDF.js worker for Vite
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker
+// Lazy load PDF.js only when needed
+let pdfjsLib = null
+async function loadPdfJs() {
+  if (pdfjsLib) return pdfjsLib
+  pdfjsLib = await import('pdfjs-dist')
+  const pdfjsWorker = await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
+  pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker.default
+  return pdfjsLib
+}
 
 /**
  * Convert a PDF file to an array of PNG images (as Blobs) using browser canvas
  */
 async function convertPdfToImages(pdfFile, maxPages = 100) {
+  const pdfjs = await loadPdfJs()
   const arrayBuffer = await pdfFile.arrayBuffer()
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
+  const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise
   const numPages = Math.min(pdf.numPages, maxPages)
 
   console.log(`Converting PDF: ${pdf.numPages} total pages, processing ${numPages}`)
