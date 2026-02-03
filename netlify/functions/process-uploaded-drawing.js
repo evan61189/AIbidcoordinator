@@ -231,26 +231,60 @@ async function saveDrawingRecord(supabase, data) {
  * Save bid items extracted from drawing
  */
 async function saveBidItems(supabase, projectId, bidRoundId, drawingId, bidItems, trades) {
-  if (!bidItems || bidItems.length === 0) return []
+  if (!bidItems || bidItems.length === 0) {
+    console.log('No bid items to save')
+    return []
+  }
 
-  // Map trade names to IDs
+  if (!trades || trades.length === 0) {
+    console.error('No trades available for mapping')
+    return []
+  }
+
+  console.log(`Saving ${bidItems.length} bid items, ${trades.length} trades available`)
+
+  // Map trade names and codes to IDs (handle both "9" and "09" formats)
   const tradeMap = {}
+  let defaultTradeId = null
   trades.forEach(t => {
+    // Store by division code as-is
     tradeMap[t.division_code] = t.id
+    // Also store without leading zero (e.g., "9" for "09")
+    tradeMap[t.division_code.replace(/^0/, '')] = t.id
+    // Store by name (lowercase)
     tradeMap[t.name.toLowerCase()] = t.id
+    // Track default trade (General Requirements)
+    if (t.division_code === '01') {
+      defaultTradeId = t.id
+    }
   })
 
+  // If no General Requirements trade, use first available
+  if (!defaultTradeId && trades.length > 0) {
+    defaultTradeId = trades[0].id
+  }
+
   const itemsToInsert = bidItems.map((item, idx) => {
-    let tradeId = tradeMap[item.division_code] ||
+    // Normalize division code (pad single digits)
+    const normalizedCode = item.division_code ?
+      item.division_code.toString().padStart(2, '0') : null
+
+    // Find trade ID with multiple fallbacks
+    let tradeId = tradeMap[normalizedCode] ||
+                  tradeMap[item.division_code] ||
                   tradeMap[item.trade_name?.toLowerCase()] ||
-                  trades.find(t => t.division_code === '01')?.id
+                  defaultTradeId
+
+    if (!tradeId) {
+      console.warn(`No trade found for item: ${item.description} (code: ${item.division_code}, trade: ${item.trade_name})`)
+    }
 
     return {
       project_id: projectId,
       bid_round_id: bidRoundId,
       trade_id: tradeId,
       source_drawing_id: drawingId,
-      item_number: `${item.division_code || '00'}-${String(idx + 1).padStart(3, '0')}`,
+      item_number: `${normalizedCode || '00'}-${String(idx + 1).padStart(3, '0')}`,
       description: item.description,
       quantity: item.quantity,
       unit: item.unit,
@@ -259,9 +293,14 @@ async function saveBidItems(supabase, projectId, bidRoundId, drawingId, bidItems
       ai_confidence: item.confidence || 0.5,
       status: 'open'
     }
-  }).filter(item => item.trade_id)
+  }).filter(item => item.trade_id && item.description)
 
-  if (itemsToInsert.length === 0) return []
+  if (itemsToInsert.length === 0) {
+    console.log('No valid bid items to insert after filtering')
+    return []
+  }
+
+  console.log(`Inserting ${itemsToInsert.length} bid items`)
 
   const { data, error } = await supabase
     .from('bid_items')

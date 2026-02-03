@@ -11,7 +11,6 @@ import Bids from './pages/Bids'
 import QuickBidEntry from './pages/QuickBidEntry'
 import Trades from './pages/Trades'
 import EmailParser from './pages/EmailParser'
-import DrawingAnalysis from './pages/DrawingAnalysis'
 
 function App() {
   return (
@@ -28,7 +27,6 @@ function App() {
         <Route path="bids/quick-entry" element={<QuickBidEntry />} />
         <Route path="trades" element={<Trades />} />
         <Route path="email-parser" element={<EmailParser />} />
-        <Route path="drawing-analysis" element={<DrawingAnalysis />} />
       </Route>
     </Routes>
   )

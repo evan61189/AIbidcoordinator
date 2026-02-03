@@ -8,8 +8,7 @@ import {
   Zap,
   Mail,
   Building2,
-  Menu,
-  FileImage
+  Menu
 } from 'lucide-react'
 import { useState } from 'react'
 
@@ -24,7 +23,6 @@ const navigation = [
 const quickActions = [
   { name: 'Quick Bid Entry', href: '/bids/quick-entry', icon: Zap },
   { name: 'Parse Bid Email', href: '/email-parser', icon: Mail },
-  { name: 'Analyze Drawings', href: '/drawing-analysis', icon: FileImage },
 ]
 
 export default function Layout() {
