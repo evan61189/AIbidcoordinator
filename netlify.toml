@@ -26,5 +26,13 @@
 [functions."analyze-drawings"]
   external_node_modules = ["@anthropic-ai/sdk"]
 
+# Process uploaded drawings - handles large PDFs already in storage
+[functions."process-uploaded-drawing"]
+  external_node_modules = ["@anthropic-ai/sdk"]
+
+# Upload drawing function - for smaller files
+[functions."upload-drawing"]
+  external_node_modules = ["@anthropic-ai/sdk"]
+
 [context.production.environment]
   NODE_VERSION = "18"
