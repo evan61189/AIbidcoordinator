@@ -1,10 +1,16 @@
 /**
- * Consolidate Bid Items
+ * Consolidate Bid Items using AI
  *
- * Deduplicates bid items within a bid round by merging similar items.
+ * Takes all extracted bid items for a round and uses AI to consolidate
+ * them into clear, general scope descriptions by trade.
  */
 
 import { createClient } from '@supabase/supabase-js'
+import Anthropic from '@anthropic-ai/sdk'
+
+export const config = {
+  maxDuration: 300 // 5 minutes for AI processing
+}
 
 function getSupabase() {
   if (process.env.VITE_SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY) {
@@ -22,104 +28,63 @@ function getSupabase() {
   return null
 }
 
-/**
- * Normalize description for comparison
- */
-function normalizeDescription(desc) {
-  if (!desc) return ''
-  return desc
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, '') // Remove punctuation
-    .replace(/\s+/g, ' ')        // Normalize whitespace
-    .trim()
-}
-
-/**
- * Calculate similarity between two strings (simple word overlap)
- */
-function calculateSimilarity(str1, str2) {
-  const words1 = new Set(normalizeDescription(str1).split(' ').filter(w => w.length > 2))
-  const words2 = new Set(normalizeDescription(str2).split(' ').filter(w => w.length > 2))
-
-  if (words1.size === 0 || words2.size === 0) return 0
-
-  const intersection = [...words1].filter(w => words2.has(w)).length
-  const union = new Set([...words1, ...words2]).size
-
-  return intersection / union // Jaccard similarity
-}
-
-/**
- * Group similar bid items
- */
-function groupSimilarItems(items, similarityThreshold = 0.7) {
-  const groups = []
-  const used = new Set()
-
-  for (let i = 0; i < items.length; i++) {
-    if (used.has(i)) continue
-
-    const group = [items[i]]
-    used.add(i)
-
-    for (let j = i + 1; j < items.length; j++) {
-      if (used.has(j)) continue
-
-      // Must be same trade
-      if (items[i].trade_id !== items[j].trade_id) continue
-
-      const similarity = calculateSimilarity(items[i].description, items[j].description)
-
-      if (similarity >= similarityThreshold) {
-        group.push(items[j])
-        used.add(j)
-      }
-    }
-
-    groups.push(group)
+function getAnthropic() {
+  if (process.env.ANTHROPIC_API_KEY) {
+    return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   }
-
-  return groups
+  return null
 }
 
 /**
- * Merge a group of similar items into one
+ * Use AI to consolidate items for a trade into clear scope descriptions
  */
-function mergeGroup(group) {
-  if (group.length === 1) return { keep: group[0], delete: [] }
+async function consolidateTradeItems(anthropic, tradeName, items) {
+  const itemDescriptions = items.map((item, i) => `${i + 1}. ${item.description}`).join('\n')
 
-  // Sort by confidence (highest first) and description length (longest first)
-  const sorted = [...group].sort((a, b) => {
-    const confDiff = (b.ai_confidence || 0) - (a.ai_confidence || 0)
-    if (confDiff !== 0) return confDiff
-    return (b.description?.length || 0) - (a.description?.length || 0)
+  const response = await anthropic.messages.create({
+    model: 'claude-sonnet-4-20250514',
+    max_tokens: 4096,
+    system: `You are a construction estimator creating clear, concise bid scope descriptions for subcontractors.
+
+Your job is to take a list of detailed extracted items and consolidate them into general scope line items that are:
+- Easy to understand at a glance
+- Comprehensive (covering all the detailed items)
+- Written in standard construction bidding language
+- Not overly specific (use phrases like "all types as indicated on drawings" instead of listing every type)`,
+    messages: [{
+      role: 'user',
+      content: `Consolidate these ${tradeName} bid items into 2-6 clear, general scope descriptions:
+
+${itemDescriptions}
+
+Return JSON array of consolidated items:
+[
+  {
+    "description": "All gypsum board wall partitions as indicated on drawings, including all partition types per partition schedule",
+    "notes": "Includes framing, insulation, blocking, and accessories"
+  }
+]
+
+Guidelines:
+- Combine similar items into general statements
+- Use "as indicated on drawings" or "per specifications" instead of listing every detail
+- Keep descriptions to 1-2 sentences max
+- Include important notes about what's included
+- Aim for 2-6 consolidated items, not one for every original item`
+    }]
   })
 
-  const keep = sorted[0]
-  const toDelete = sorted.slice(1)
-
-  // Combine notes from all items
-  const allNotes = group
-    .map(item => item.notes)
-    .filter(n => n && n.trim())
-  const uniqueNotes = [...new Set(allNotes)]
-
-  // Combine locations
-  const allLocations = group
-    .map(item => item.location)
-    .filter(l => l && l.trim())
-  const uniqueLocations = [...new Set(allLocations)]
-
-  // Update the keeper with combined info
-  const updates = {}
-  if (uniqueNotes.length > 0) {
-    updates.notes = uniqueNotes.join('; ')
-  }
-  if (uniqueLocations.length > 1) {
-    updates.location = uniqueLocations.join(', ')
+  try {
+    const text = response.content[0].text
+    const jsonMatch = text.match(/\[[\s\S]*\]/)
+    if (jsonMatch) {
+      return JSON.parse(jsonMatch[0])
+    }
+  } catch (e) {
+    console.error('Failed to parse AI response:', e)
   }
 
-  return { keep, delete: toDelete, updates }
+  return null
 }
 
 export async function handler(event) {
@@ -143,6 +108,8 @@ export async function handler(event) {
   }
 
   const supabase = getSupabase()
+  const anthropic = getAnthropic()
+
   if (!supabase) {
     return {
       statusCode: 500,
@@ -151,9 +118,17 @@ export async function handler(event) {
     }
   }
 
+  if (!anthropic) {
+    return {
+      statusCode: 500,
+      headers,
+      body: JSON.stringify({ error: 'Anthropic API not configured' })
+    }
+  }
+
   try {
     const body = JSON.parse(event.body)
-    const { bid_round_id: bidRoundId, similarity_threshold: threshold = 0.7 } = body
+    const { bid_round_id: bidRoundId, project_id: projectId } = body
 
     if (!bidRoundId) {
       return {
@@ -163,15 +138,15 @@ export async function handler(event) {
       }
     }
 
-    console.log(`Consolidating bid items for round: ${bidRoundId}`)
+    console.log(`AI consolidating bid items for round: ${bidRoundId}`)
 
-    // Fetch all bid items for this round
+    // Fetch all bid items with trade info
     const { data: items, error: fetchError } = await supabase
       .from('bid_items')
-      .select('*')
+      .select('*, trades(id, name, division_code)')
       .eq('bid_round_id', bidRoundId)
-      .eq('ai_generated', true) // Only consolidate AI-generated items
-      .order('created_at', { ascending: true })
+      .eq('ai_generated', true)
+      .order('trade_id')
 
     if (fetchError) {
       throw new Error(`Failed to fetch bid items: ${fetchError.message}`)
@@ -185,58 +160,99 @@ export async function handler(event) {
           success: true,
           message: 'No items to consolidate',
           original_count: 0,
-          final_count: 0,
-          removed_count: 0
+          final_count: 0
         })
       }
     }
 
     console.log(`Found ${items.length} AI-generated bid items`)
 
-    // Group similar items
-    const groups = groupSimilarItems(items, threshold)
-    console.log(`Grouped into ${groups.length} unique items`)
-
-    let removedCount = 0
-    let updatedCount = 0
-
-    // Process each group
-    for (const group of groups) {
-      if (group.length === 1) continue // No duplicates
-
-      const { keep, delete: toDelete, updates } = mergeGroup(group)
-
-      // Update the keeper if needed
-      if (updates && Object.keys(updates).length > 0) {
-        const { error: updateError } = await supabase
-          .from('bid_items')
-          .update(updates)
-          .eq('id', keep.id)
-
-        if (updateError) {
-          console.error(`Failed to update item ${keep.id}:`, updateError)
-        } else {
-          updatedCount++
+    // Group items by trade
+    const itemsByTrade = {}
+    for (const item of items) {
+      const tradeId = item.trade_id
+      const tradeName = item.trades?.name || 'Unknown'
+      if (!itemsByTrade[tradeId]) {
+        itemsByTrade[tradeId] = {
+          tradeName,
+          divisionCode: item.trades?.division_code || '00',
+          items: []
         }
       }
-
-      // Delete duplicates
-      const deleteIds = toDelete.map(item => item.id)
-      if (deleteIds.length > 0) {
-        const { error: deleteError } = await supabase
-          .from('bid_items')
-          .delete()
-          .in('id', deleteIds)
-
-        if (deleteError) {
-          console.error(`Failed to delete duplicates:`, deleteError)
-        } else {
-          removedCount += deleteIds.length
-        }
-      }
+      itemsByTrade[tradeId].items.push(item)
     }
 
-    console.log(`Consolidation complete: removed ${removedCount} duplicates, updated ${updatedCount} items`)
+    const tradeCount = Object.keys(itemsByTrade).length
+    console.log(`Items grouped into ${tradeCount} trades`)
+
+    let totalConsolidated = 0
+    let totalCreated = 0
+
+    // Process each trade
+    for (const [tradeId, tradeData] of Object.entries(itemsByTrade)) {
+      const { tradeName, divisionCode, items: tradeItems } = tradeData
+
+      // Skip trades with only 1-2 items
+      if (tradeItems.length <= 2) {
+        console.log(`Skipping ${tradeName} - only ${tradeItems.length} items`)
+        continue
+      }
+
+      console.log(`Consolidating ${tradeItems.length} items for ${tradeName}...`)
+
+      // Use AI to consolidate
+      const consolidated = await consolidateTradeItems(anthropic, tradeName, tradeItems)
+
+      if (!consolidated || consolidated.length === 0) {
+        console.log(`AI returned no consolidated items for ${tradeName}`)
+        continue
+      }
+
+      console.log(`AI created ${consolidated.length} consolidated items for ${tradeName}`)
+
+      // Delete old items
+      const oldIds = tradeItems.map(i => i.id)
+      const { error: deleteError } = await supabase
+        .from('bid_items')
+        .delete()
+        .in('id', oldIds)
+
+      if (deleteError) {
+        console.error(`Failed to delete old items for ${tradeName}:`, deleteError)
+        continue
+      }
+
+      // Insert consolidated items
+      const newItems = consolidated.map((item, idx) => ({
+        project_id: projectId || tradeItems[0].project_id,
+        bid_round_id: bidRoundId,
+        trade_id: tradeId,
+        item_number: `${divisionCode}-${String(idx + 1).padStart(3, '0')}`,
+        description: item.description,
+        notes: item.notes || null,
+        quantity: 'Per drawings',
+        unit: 'LS',
+        ai_generated: true,
+        ai_confidence: 0.9,
+        status: 'open'
+      }))
+
+      const { error: insertError } = await supabase
+        .from('bid_items')
+        .insert(newItems)
+
+      if (insertError) {
+        console.error(`Failed to insert consolidated items for ${tradeName}:`, insertError)
+        continue
+      }
+
+      totalConsolidated += tradeItems.length
+      totalCreated += consolidated.length
+    }
+
+    const finalCount = items.length - totalConsolidated + totalCreated
+
+    console.log(`Consolidation complete: ${items.length} -> ${finalCount} items`)
 
     return {
       statusCode: 200,
@@ -244,10 +260,10 @@ export async function handler(event) {
       body: JSON.stringify({
         success: true,
         original_count: items.length,
-        final_count: items.length - removedCount,
-        removed_count: removedCount,
-        updated_count: updatedCount,
-        groups_count: groups.length
+        final_count: finalCount,
+        trades_processed: tradeCount,
+        items_consolidated: totalConsolidated,
+        items_created: totalCreated
       })
     }
 
