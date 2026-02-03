@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { DollarSign, Search, Filter, Zap, RefreshCw, Mail, Trash2, CheckSquare, Square } from 'lucide-react'
-import { fetchBids, fetchProjects, updateBid, deleteBids, fetchDrawingsForProject } from '../lib/supabase'
+import { DollarSign, Search, Filter, Zap, RefreshCw, Mail, Trash2, CheckSquare, Square, Inbox, Check, X, Eye } from 'lucide-react'
+import { fetchBids, fetchProjects, updateBid, deleteBids, fetchDrawingsForProject, fetchBidResponses, updateBidResponse } from '../lib/supabase'
 import { format } from 'date-fns'
 
 export default function Bids() {
   const [bids, setBids] = useState([])
+  const [bidResponses, setBidResponses] = useState([])
   const [projects, setProjects] = useState([])
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState('all')
@@ -14,6 +15,7 @@ export default function Bids() {
   const [resendingId, setResendingId] = useState(null)
   const [selectedBids, setSelectedBids] = useState(new Set())
   const [deleting, setDeleting] = useState(false)
+  const [expandedResponse, setExpandedResponse] = useState(null)
 
   useEffect(() => {
     loadData()
@@ -22,17 +24,71 @@ export default function Bids() {
   async function loadData() {
     setLoading(true)
     try {
-      const [bidsData, projectsData] = await Promise.all([
+      const [bidsData, projectsData, responsesData] = await Promise.all([
         fetchBids({ status: statusFilter !== 'all' ? statusFilter : undefined }),
-        fetchProjects('bidding')
+        fetchProjects('bidding'),
+        fetchBidResponses('pending_review')
       ])
       setBids(bidsData || [])
       setProjects(projectsData || [])
+      setBidResponses(responsesData || [])
       setSelectedBids(new Set()) // Clear selection on reload
     } catch (error) {
       console.error('Error loading bids:', error)
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function handleApproveResponse(response) {
+    // Find matching bid for this subcontractor/project
+    const matchingBid = bids.find(b =>
+      b.subcontractor?.id === response.subcontractor_id &&
+      b.bid_item?.project?.id === response.project_id &&
+      b.status === 'invited'
+    )
+
+    if (!matchingBid) {
+      alert('Could not find matching bid to update. The response has been marked as approved.')
+    }
+
+    try {
+      // Update the bid if found
+      if (matchingBid) {
+        await updateBid(matchingBid.id, {
+          amount: response.total_amount,
+          status: 'submitted',
+          submitted_at: new Date().toISOString()
+        })
+      }
+
+      // Mark response as approved
+      await updateBidResponse(response.id, {
+        status: 'approved',
+        bid_id: matchingBid?.id,
+        reviewed_at: new Date().toISOString()
+      })
+
+      alert(`Bid response approved! ${matchingBid ? `Bid updated to $${response.total_amount?.toLocaleString()}` : ''}`)
+      loadData()
+    } catch (error) {
+      console.error('Error approving response:', error)
+      alert('Failed to approve response')
+    }
+  }
+
+  async function handleRejectResponse(responseId) {
+    if (!confirm('Are you sure you want to reject this bid response?')) return
+
+    try {
+      await updateBidResponse(responseId, {
+        status: 'rejected',
+        reviewed_at: new Date().toISOString()
+      })
+      loadData()
+    } catch (error) {
+      console.error('Error rejecting response:', error)
+      alert('Failed to reject response')
     }
   }
 
@@ -219,6 +275,110 @@ export default function Bids() {
           Quick Entry
         </Link>
       </div>
+
+      {/* Incoming Bid Responses */}
+      {bidResponses.length > 0 && (
+        <div className="card border-2 border-green-200 bg-green-50">
+          <div className="p-4 border-b border-green-200">
+            <div className="flex items-center gap-2">
+              <Inbox className="h-5 w-5 text-green-600" />
+              <h2 className="text-lg font-semibold text-green-800">
+                Incoming Bid Responses ({bidResponses.length})
+              </h2>
+            </div>
+            <p className="text-sm text-green-600 mt-1">
+              These bids were received via email and parsed by AI. Review and approve to update bid amounts.
+            </p>
+          </div>
+          <div className="divide-y divide-green-200">
+            {bidResponses.map(response => (
+              <div key={response.id} className="p-4">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-semibold text-gray-900">
+                        {response.subcontractor?.company_name || response.inbound_email?.from_name || 'Unknown'}
+                      </span>
+                      <span className="text-gray-400">•</span>
+                      <span className="text-gray-600">
+                        {response.project?.name || 'Unknown Project'}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-4 text-sm">
+                      <span className="font-bold text-2xl text-green-700">
+                        ${response.total_amount?.toLocaleString() || '0'}
+                      </span>
+                      {response.line_items?.length > 0 && (
+                        <span className="text-gray-500">
+                          {response.line_items.length} line item(s)
+                        </span>
+                      )}
+                      <span className={`badge ${response.ai_confidence_score >= 0.8 ? 'badge-success' : response.ai_confidence_score >= 0.5 ? 'badge-warning' : 'badge-danger'}`}>
+                        {Math.round((response.ai_confidence_score || 0) * 100)}% confidence
+                      </span>
+                      <span className="text-gray-400">
+                        {response.inbound_email?.received_at && format(new Date(response.inbound_email.received_at), 'MMM d, h:mm a')}
+                      </span>
+                    </div>
+                    {/* Expandable details */}
+                    {expandedResponse === response.id && (
+                      <div className="mt-3 p-3 bg-white rounded border text-sm space-y-2">
+                        {response.line_items?.length > 0 && (
+                          <div>
+                            <strong>Line Items:</strong>
+                            <ul className="list-disc list-inside ml-2">
+                              {response.line_items.map((item, i) => (
+                                <li key={i}>
+                                  {item.description}: ${item.total?.toLocaleString() || item.unit_price?.toLocaleString() || 'N/A'}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {response.scope_included && (
+                          <div><strong>Includes:</strong> {response.scope_included}</div>
+                        )}
+                        {response.scope_excluded && (
+                          <div><strong>Excludes:</strong> {response.scope_excluded}</div>
+                        )}
+                        {response.clarifications && (
+                          <div><strong>Clarifications:</strong> {response.clarifications}</div>
+                        )}
+                        {response.lead_time && (
+                          <div><strong>Lead Time:</strong> {response.lead_time}</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setExpandedResponse(expandedResponse === response.id ? null : response.id)}
+                      className="btn btn-sm bg-gray-100 text-gray-700 hover:bg-gray-200"
+                    >
+                      <Eye className="h-4 w-4" />
+                      {expandedResponse === response.id ? 'Hide' : 'Details'}
+                    </button>
+                    <button
+                      onClick={() => handleApproveResponse(response)}
+                      className="btn btn-sm bg-green-600 text-white hover:bg-green-700 flex items-center gap-1"
+                    >
+                      <Check className="h-4 w-4" />
+                      Approve
+                    </button>
+                    <button
+                      onClick={() => handleRejectResponse(response.id)}
+                      className="btn btn-sm bg-red-100 text-red-600 hover:bg-red-200 flex items-center gap-1"
+                    >
+                      <X className="h-4 w-4" />
+                      Reject
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="card p-4">
