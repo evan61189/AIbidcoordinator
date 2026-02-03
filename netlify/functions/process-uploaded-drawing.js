@@ -68,8 +68,12 @@ async function downloadFromStorage(supabase, storagePath) {
 async function analyzeDrawing(anthropic, fileData, mimeType, projectName, drawingType) {
   const content = []
 
+  console.log('analyzeDrawing called with mimeType:', mimeType)
+  console.log('fileData size:', fileData.size, 'base64 length:', fileData.base64?.length)
+
   // Add the file based on type
   if (mimeType === 'application/pdf') {
+    console.log('Adding PDF as document type')
     content.push({
       type: 'document',
       source: {
@@ -78,12 +82,24 @@ async function analyzeDrawing(anthropic, fileData, mimeType, projectName, drawin
         data: fileData.base64
       }
     })
-  } else if (mimeType.startsWith('image/')) {
+  } else if (mimeType && mimeType.startsWith('image/')) {
+    console.log('Adding as image type:', mimeType)
     content.push({
       type: 'image',
       source: {
         type: 'base64',
         media_type: mimeType,
+        data: fileData.base64
+      }
+    })
+  } else {
+    console.log('Unknown mimeType, attempting as document:', mimeType)
+    // Try as document for unknown types
+    content.push({
+      type: 'document',
+      source: {
+        type: 'base64',
+        media_type: mimeType || 'application/pdf',
         data: fileData.base64
       }
     })
@@ -166,6 +182,8 @@ IMPORTANT:
   })
 
   console.log('Calling Claude API for analysis...')
+  console.log('Content types being sent:', content.map(c => c.type))
+
   const message = await anthropic.messages.create({
     model: CLAUDE_MODEL,
     max_tokens: 8192,
@@ -174,13 +192,17 @@ IMPORTANT:
   })
 
   const responseText = message.content[0].text
-  console.log('Received Claude response, parsing JSON...')
+  console.log('Received Claude response length:', responseText.length)
+  console.log('Response preview:', responseText.substring(0, 500))
 
   // Parse JSON
   try {
     const codeBlockMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)```/)
     if (codeBlockMatch) {
-      return JSON.parse(codeBlockMatch[1].trim())
+      console.log('Found JSON in code block')
+      const parsed = JSON.parse(codeBlockMatch[1].trim())
+      console.log('Parsed bid_items count:', parsed.bid_items?.length || 0)
+      return parsed
     }
 
     const jsonStart = responseText.indexOf('{')
@@ -196,18 +218,24 @@ IMPORTANT:
         }
       }
       if (jsonEnd > jsonStart) {
-        return JSON.parse(responseText.substring(jsonStart, jsonEnd))
+        console.log('Found raw JSON object')
+        const parsed = JSON.parse(responseText.substring(jsonStart, jsonEnd))
+        console.log('Parsed bid_items count:', parsed.bid_items?.length || 0)
+        return parsed
       }
     }
+
+    console.log('No JSON found in response')
   } catch (e) {
     console.error('JSON parse error:', e.message)
+    console.error('Failed to parse:', responseText.substring(0, 1000))
   }
 
   return {
     drawing_info: {},
     bid_items: [],
     summary: 'Analysis completed but extraction failed',
-    raw_response: responseText
+    raw_response: responseText.substring(0, 2000)
   }
 }
 
@@ -442,11 +470,19 @@ export async function handler(event) {
     // Analyze with AI if enabled
     if (processWithAI && anthropic) {
       console.log('Starting AI analysis...')
+      console.log('File type for analysis:', fileType)
       try {
         analysis = await analyzeDrawing(anthropic, fileData, fileType, projectName)
         console.log(`AI extracted ${analysis.bid_items?.length || 0} bid items`)
+        if (analysis.bid_items && analysis.bid_items.length > 0) {
+          console.log('First bid item:', JSON.stringify(analysis.bid_items[0]))
+        }
+        if (analysis.raw_response) {
+          console.log('AI returned raw_response (parsing may have failed)')
+        }
       } catch (aiError) {
         console.error('AI analysis error:', aiError.message)
+        console.error('AI error stack:', aiError.stack)
         analysis = { drawing_info: {}, bid_items: [], error: aiError.message }
       }
     } else if (!anthropic) {
@@ -489,8 +525,10 @@ export async function handler(event) {
         drawing_id: drawing.id,
         storage_url: storageUrl,
         drawing_info: analysis.drawing_info,
+        bid_items_extracted: analysis.bid_items?.length || 0,
         bid_items_created: savedBidItems.length,
-        summary: analysis.summary
+        summary: analysis.summary,
+        parse_error: analysis.raw_response ? 'JSON parsing failed - check logs' : null
       })
     }
 
