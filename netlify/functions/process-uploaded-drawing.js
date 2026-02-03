@@ -169,6 +169,29 @@ Return JSON:
 }
 
 /**
+ * Convert MIME type to short file extension (fits VARCHAR(10))
+ */
+function getShortFileType(mimeType) {
+  const mimeMap = {
+    'application/pdf': 'pdf',
+    'image/png': 'png',
+    'image/jpeg': 'jpeg',
+    'image/jpg': 'jpg',
+    'image/webp': 'webp',
+    'image/gif': 'gif'
+  }
+  return mimeMap[mimeType] || mimeType?.split('/').pop()?.substring(0, 10) || 'unknown'
+}
+
+/**
+ * Truncate string to fit column limit
+ */
+function truncate(str, maxLen) {
+  if (!str) return str
+  return str.length > maxLen ? str.substring(0, maxLen) : str
+}
+
+/**
  * Save drawing record to database
  */
 async function saveDrawingRecord(supabase, data) {
@@ -177,14 +200,14 @@ async function saveDrawingRecord(supabase, data) {
     .insert({
       project_id: data.projectId,
       bid_round_id: data.bidRoundId,
-      filename: data.storagePath.split('/').pop(),
-      original_filename: data.originalFilename,
-      drawing_number: data.drawingInfo?.sheet_number,
-      title: data.drawingInfo?.title,
-      discipline: data.drawingInfo?.discipline_code || data.drawingInfo?.discipline,
-      revision: data.drawingInfo?.revision,
+      filename: truncate(data.storagePath.split('/').pop(), 255),
+      original_filename: truncate(data.originalFilename, 255),
+      drawing_number: truncate(data.drawingInfo?.sheet_number, 50),
+      title: truncate(data.drawingInfo?.title, 200),
+      discipline: truncate(data.drawingInfo?.discipline_code || data.drawingInfo?.discipline, 50),
+      revision: truncate(data.drawingInfo?.revision, 20),
       revision_date: data.drawingInfo?.revision_date,
-      file_type: data.fileType,
+      file_type: getShortFileType(data.fileType),
       file_size: data.fileSize,
       storage_path: data.storagePath,
       storage_url: data.storageUrl,
