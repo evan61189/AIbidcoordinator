@@ -1,15 +1,17 @@
 /**
  * Consolidate Bid Items using AI
  *
- * Takes all extracted bid items for a round and uses AI to consolidate
- * them into clear, general scope descriptions by trade.
+ * Takes bid items for a single trade and uses AI to consolidate
+ * them into clear, general scope descriptions.
+ *
+ * Call once per trade to avoid timeouts.
  */
 
 import { createClient } from '@supabase/supabase-js'
 import Anthropic from '@anthropic-ai/sdk'
 
 export const config = {
-  maxDuration: 300 // 5 minutes for AI processing
+  maxDuration: 60 // 1 minute per trade should be plenty
 }
 
 function getSupabase() {
@@ -128,7 +130,7 @@ export async function handler(event) {
 
   try {
     const body = JSON.parse(event.body)
-    const { bid_round_id: bidRoundId, project_id: projectId } = body
+    const { bid_round_id: bidRoundId, project_id: projectId, trade_id: tradeId } = body
 
     if (!bidRoundId) {
       return {
@@ -138,132 +140,144 @@ export async function handler(event) {
       }
     }
 
-    console.log(`AI consolidating bid items for round: ${bidRoundId}`)
+    // If no trade_id specified, return list of trades to process
+    if (!tradeId) {
+      console.log(`Getting trades to consolidate for round: ${bidRoundId}`)
 
-    // Fetch all bid items with trade info
-    const { data: items, error: fetchError } = await supabase
-      .from('bid_items')
-      .select('*, trades(id, name, division_code)')
-      .eq('bid_round_id', bidRoundId)
-      .eq('ai_generated', true)
-      .order('trade_id')
+      const { data: items, error: fetchError } = await supabase
+        .from('bid_items')
+        .select('trade_id, trades(id, name, division_code)')
+        .eq('bid_round_id', bidRoundId)
+        .eq('ai_generated', true)
 
-    if (fetchError) {
-      throw new Error(`Failed to fetch bid items: ${fetchError.message}`)
-    }
+      if (fetchError) {
+        throw new Error(`Failed to fetch bid items: ${fetchError.message}`)
+      }
 
-    if (!items || items.length === 0) {
+      // Group by trade and count
+      const tradeCounts = {}
+      for (const item of items || []) {
+        const tid = item.trade_id
+        if (!tradeCounts[tid]) {
+          tradeCounts[tid] = {
+            trade_id: tid,
+            trade_name: item.trades?.name || 'Unknown',
+            division_code: item.trades?.division_code || '00',
+            count: 0
+          }
+        }
+        tradeCounts[tid].count++
+      }
+
+      // Only return trades with 3+ items (worth consolidating)
+      const tradesToProcess = Object.values(tradeCounts).filter(t => t.count >= 3)
+
       return {
         statusCode: 200,
         headers,
         body: JSON.stringify({
           success: true,
-          message: 'No items to consolidate',
-          original_count: 0,
-          final_count: 0
+          total_items: items?.length || 0,
+          trades: tradesToProcess
         })
       }
     }
 
-    console.log(`Found ${items.length} AI-generated bid items`)
+    // Process a single trade
+    console.log(`Consolidating trade ${tradeId} for round: ${bidRoundId}`)
 
-    // Group items by trade
-    const itemsByTrade = {}
-    for (const item of items) {
-      const tradeId = item.trade_id
-      const tradeName = item.trades?.name || 'Unknown'
-      if (!itemsByTrade[tradeId]) {
-        itemsByTrade[tradeId] = {
-          tradeName,
-          divisionCode: item.trades?.division_code || '00',
-          items: []
-        }
-      }
-      itemsByTrade[tradeId].items.push(item)
+    // Fetch items for this trade
+    const { data: tradeItems, error: fetchError } = await supabase
+      .from('bid_items')
+      .select('*, trades(id, name, division_code)')
+      .eq('bid_round_id', bidRoundId)
+      .eq('trade_id', tradeId)
+      .eq('ai_generated', true)
+
+    if (fetchError) {
+      throw new Error(`Failed to fetch trade items: ${fetchError.message}`)
     }
 
-    const tradeCount = Object.keys(itemsByTrade).length
-    console.log(`Items grouped into ${tradeCount} trades`)
-
-    let totalConsolidated = 0
-    let totalCreated = 0
-
-    // Process each trade
-    for (const [tradeId, tradeData] of Object.entries(itemsByTrade)) {
-      const { tradeName, divisionCode, items: tradeItems } = tradeData
-
-      // Skip trades with only 1-2 items
-      if (tradeItems.length <= 2) {
-        console.log(`Skipping ${tradeName} - only ${tradeItems.length} items`)
-        continue
+    if (!tradeItems || tradeItems.length < 3) {
+      return {
+        statusCode: 200,
+        headers,
+        body: JSON.stringify({
+          success: true,
+          message: 'Not enough items to consolidate',
+          original_count: tradeItems?.length || 0,
+          final_count: tradeItems?.length || 0
+        })
       }
-
-      console.log(`Consolidating ${tradeItems.length} items for ${tradeName}...`)
-
-      // Use AI to consolidate
-      const consolidated = await consolidateTradeItems(anthropic, tradeName, tradeItems)
-
-      if (!consolidated || consolidated.length === 0) {
-        console.log(`AI returned no consolidated items for ${tradeName}`)
-        continue
-      }
-
-      console.log(`AI created ${consolidated.length} consolidated items for ${tradeName}`)
-
-      // Delete old items
-      const oldIds = tradeItems.map(i => i.id)
-      const { error: deleteError } = await supabase
-        .from('bid_items')
-        .delete()
-        .in('id', oldIds)
-
-      if (deleteError) {
-        console.error(`Failed to delete old items for ${tradeName}:`, deleteError)
-        continue
-      }
-
-      // Insert consolidated items
-      const newItems = consolidated.map((item, idx) => ({
-        project_id: projectId || tradeItems[0].project_id,
-        bid_round_id: bidRoundId,
-        trade_id: tradeId,
-        item_number: `${divisionCode}-${String(idx + 1).padStart(3, '0')}`,
-        description: item.description,
-        notes: item.notes || null,
-        quantity: 'Per drawings',
-        unit: 'LS',
-        ai_generated: true,
-        ai_confidence: 0.9,
-        status: 'open'
-      }))
-
-      const { error: insertError } = await supabase
-        .from('bid_items')
-        .insert(newItems)
-
-      if (insertError) {
-        console.error(`Failed to insert consolidated items for ${tradeName}:`, insertError)
-        continue
-      }
-
-      totalConsolidated += tradeItems.length
-      totalCreated += consolidated.length
     }
 
-    const finalCount = items.length - totalConsolidated + totalCreated
+    const tradeName = tradeItems[0].trades?.name || 'Unknown'
+    const divisionCode = tradeItems[0].trades?.division_code || '00'
 
-    console.log(`Consolidation complete: ${items.length} -> ${finalCount} items`)
+    console.log(`Consolidating ${tradeItems.length} items for ${tradeName}...`)
+
+    // Use AI to consolidate
+    const consolidated = await consolidateTradeItems(anthropic, tradeName, tradeItems)
+
+    if (!consolidated || consolidated.length === 0) {
+      return {
+        statusCode: 200,
+        headers,
+        body: JSON.stringify({
+          success: true,
+          message: 'AI could not consolidate items',
+          original_count: tradeItems.length,
+          final_count: tradeItems.length
+        })
+      }
+    }
+
+    console.log(`AI created ${consolidated.length} consolidated items`)
+
+    // Delete old items
+    const oldIds = tradeItems.map(i => i.id)
+    const { error: deleteError } = await supabase
+      .from('bid_items')
+      .delete()
+      .in('id', oldIds)
+
+    if (deleteError) {
+      throw new Error(`Failed to delete old items: ${deleteError.message}`)
+    }
+
+    // Insert consolidated items
+    const newItems = consolidated.map((item, idx) => ({
+      project_id: projectId || tradeItems[0].project_id,
+      bid_round_id: bidRoundId,
+      trade_id: tradeId,
+      item_number: `${divisionCode}-${String(idx + 1).padStart(3, '0')}`,
+      description: item.description,
+      notes: item.notes || null,
+      quantity: 'Per drawings',
+      unit: 'LS',
+      ai_generated: true,
+      ai_confidence: 0.9,
+      status: 'open'
+    }))
+
+    const { error: insertError } = await supabase
+      .from('bid_items')
+      .insert(newItems)
+
+    if (insertError) {
+      throw new Error(`Failed to insert consolidated items: ${insertError.message}`)
+    }
+
+    console.log(`Consolidation complete for ${tradeName}: ${tradeItems.length} -> ${consolidated.length}`)
 
     return {
       statusCode: 200,
       headers,
       body: JSON.stringify({
         success: true,
-        original_count: items.length,
-        final_count: finalCount,
-        trades_processed: tradeCount,
-        items_consolidated: totalConsolidated,
-        items_created: totalCreated
+        trade_name: tradeName,
+        original_count: tradeItems.length,
+        final_count: consolidated.length
       })
     }
 

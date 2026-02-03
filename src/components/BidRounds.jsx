@@ -316,6 +316,51 @@ export default function BidRounds({ projectId, projectName }) {
     }
   }
 
+  async function deleteAllDrawings(roundId) {
+    const count = roundDrawings.length
+    if (!confirm(`Are you sure you want to delete all ${count} drawings from this round? This will also delete all bid items extracted from them.`)) {
+      return
+    }
+
+    try {
+      toast.loading(`Deleting ${count} drawings...`, { id: 'delete-all' })
+
+      // Get all drawing IDs and storage paths
+      const drawingIds = roundDrawings.map(d => d.id)
+      const storagePaths = roundDrawings.map(d => d.storage_path).filter(Boolean)
+
+      // Delete all associated bid items
+      await supabase
+        .from('bid_items')
+        .delete()
+        .in('source_drawing_id', drawingIds)
+
+      // Delete all drawing records
+      const { error: dbError } = await supabase
+        .from('drawings')
+        .delete()
+        .in('id', drawingIds)
+
+      if (dbError) throw dbError
+
+      // Try to delete from storage
+      if (storagePaths.length > 0) {
+        await supabase.storage
+          .from('drawings')
+          .remove(storagePaths)
+      }
+
+      toast.dismiss('delete-all')
+      toast.success(`Deleted ${count} drawings`)
+      setViewingDrawingsRoundId(null)
+      loadRounds()
+    } catch (error) {
+      toast.dismiss('delete-all')
+      console.error('Error deleting drawings:', error)
+      toast.error('Failed to delete drawings')
+    }
+  }
+
   // Maximum file size for direct function upload (smaller files go directly to function)
   const MAX_DIRECT_UPLOAD_SIZE = 800 * 1024 // 800KB - stay under Netlify's 1MB limit with some buffer
 
@@ -515,19 +560,18 @@ export default function BidRounds({ projectId, projectName }) {
         }
       }
 
-      // Consolidate duplicate bid items
+      // Consolidate bid items by trade using AI
       if (totalBidItemsCreated > 0) {
-        setUploadProgress({
-          current: files.length,
-          total: files.length,
-          filename: 'AI consolidating scope items...',
-          phase: 'consolidating'
-        })
-
-        toast.loading('AI is consolidating scope items...', { id: 'consolidate' })
-
         try {
-          const consolidateResponse = await fetch('/.netlify/functions/consolidate-bid-items', {
+          // First, get list of trades to consolidate
+          setUploadProgress({
+            current: files.length,
+            total: files.length,
+            filename: 'Preparing consolidation...',
+            phase: 'consolidating'
+          })
+
+          const tradesResponse = await fetch('/.netlify/functions/consolidate-bid-items', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -536,15 +580,61 @@ export default function BidRounds({ projectId, projectName }) {
             })
           })
 
-          toast.dismiss('consolidate')
+          if (tradesResponse.ok) {
+            const tradesResult = await tradesResponse.json()
+            const trades = tradesResult.trades || []
 
-          if (consolidateResponse.ok) {
-            const consolidateResult = await consolidateResponse.json()
-            console.log('Consolidation result:', consolidateResult)
+            console.log(`Found ${trades.length} trades to consolidate`)
 
-            if (consolidateResult.items_consolidated > 0) {
-              totalBidItemsCreated = consolidateResult.final_count
-              console.log(`AI consolidated ${consolidateResult.items_consolidated} items into ${consolidateResult.items_created}`)
+            let totalOriginal = 0
+            let totalFinal = 0
+
+            // Process each trade one at a time
+            for (let t = 0; t < trades.length; t++) {
+              const trade = trades[t]
+
+              setUploadProgress({
+                current: t + 1,
+                total: trades.length,
+                filename: `Consolidating ${trade.trade_name}...`,
+                phase: 'consolidating'
+              })
+
+              toast.loading(`AI consolidating ${trade.trade_name}...`, { id: 'consolidate' })
+
+              try {
+                const tradeResponse = await fetch('/.netlify/functions/consolidate-bid-items', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    bid_round_id: roundId,
+                    project_id: projectId,
+                    trade_id: trade.trade_id
+                  })
+                })
+
+                if (tradeResponse.ok) {
+                  const result = await tradeResponse.json()
+                  console.log(`Consolidated ${trade.trade_name}:`, result)
+                  totalOriginal += result.original_count || 0
+                  totalFinal += result.final_count || 0
+                }
+              } catch (tradeError) {
+                console.error(`Error consolidating ${trade.trade_name}:`, tradeError)
+              }
+
+              toast.dismiss('consolidate')
+
+              // Small delay between trades
+              if (t < trades.length - 1) {
+                await delay(500)
+              }
+            }
+
+            if (totalOriginal > 0) {
+              console.log(`Total consolidation: ${totalOriginal} -> ${totalFinal} items`)
+              // Update count to reflect consolidation
+              totalBidItemsCreated = totalBidItemsCreated - totalOriginal + totalFinal
             }
           }
         } catch (consolidateError) {
@@ -557,7 +647,7 @@ export default function BidRounds({ projectId, projectName }) {
       // Show success message
       let bidItemsMsg
       if (totalBidItemsCreated > 0) {
-        bidItemsMsg = ` and extracted ${totalBidItemsCreated} unique bid item(s) from ${totalPagesProcessed} page(s)`
+        bidItemsMsg = ` and created ${totalBidItemsCreated} scope item(s) from ${totalPagesProcessed} page(s)`
       } else {
         bidItemsMsg = ` (${totalPagesProcessed} page(s) processed, no bid items extracted)`
       }
@@ -836,13 +926,27 @@ export default function BidRounds({ projectId, projectName }) {
             <div className="px-6 py-4 border-b flex items-center justify-between">
               <h2 className="text-lg font-semibold">
                 Drawings for {rounds.find(r => r.id === viewingDrawingsRoundId)?.name}
+                <span className="text-sm font-normal text-gray-500 ml-2">
+                  ({roundDrawings.length} files)
+                </span>
               </h2>
-              <button
-                onClick={() => setViewingDrawingsRoundId(null)}
-                className="p-1 hover:bg-gray-100 rounded"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                {roundDrawings.length > 0 && (
+                  <button
+                    onClick={() => deleteAllDrawings(viewingDrawingsRoundId)}
+                    className="px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 rounded flex items-center gap-1"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Delete All
+                  </button>
+                )}
+                <button
+                  onClick={() => setViewingDrawingsRoundId(null)}
+                  className="p-1 hover:bg-gray-100 rounded"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
             <div className="p-6 overflow-y-auto flex-1">
               {loadingDrawings ? (
