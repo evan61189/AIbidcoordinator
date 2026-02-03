@@ -314,3 +314,69 @@ export async function getDashboardStats() {
 
   return { activeProjects, pendingBids, submittedBids, totalSubcontractors }
 }
+
+// Bid Responses (from parsed emails)
+export async function fetchBidResponses(status = null) {
+  let query = supabase
+    .from('bid_responses')
+    .select(`
+      *,
+      project:projects (id, name),
+      subcontractor:subcontractors (id, company_name, email),
+      inbound_email:inbound_emails (id, from_email, from_name, subject, received_at)
+    `)
+    .order('created_at', { ascending: false })
+
+  if (status && status !== 'all') {
+    query = query.eq('status', status)
+  }
+
+  const { data, error } = await query
+  if (error) throw error
+  return data
+}
+
+export async function updateBidResponse(id, updates) {
+  const { data, error } = await supabase
+    .from('bid_responses')
+    .update(updates)
+    .eq('id', id)
+    .select()
+    .single()
+
+  if (error) throw error
+  return data
+}
+
+export async function approveBidResponse(bidResponseId, bidId) {
+  // Update the bid with the amount from the response
+  const { data: response } = await supabase
+    .from('bid_responses')
+    .select('total_amount, line_items')
+    .eq('id', bidResponseId)
+    .single()
+
+  if (response) {
+    // Update the bid record
+    await supabase
+      .from('bids')
+      .update({
+        amount: response.total_amount,
+        status: 'submitted',
+        submitted_at: new Date().toISOString()
+      })
+      .eq('id', bidId)
+
+    // Mark response as approved
+    await supabase
+      .from('bid_responses')
+      .update({
+        status: 'approved',
+        bid_id: bidId,
+        reviewed_at: new Date().toISOString()
+      })
+      .eq('id', bidResponseId)
+  }
+
+  return response
+}
