@@ -8,6 +8,56 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import BidLeveling from './BidLeveling'
+import * as pdfjsLib from 'pdfjs-dist'
+
+// Set up PDF.js worker
+pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`
+
+/**
+ * Convert a PDF file to an array of PNG images (as Blobs) using browser canvas
+ */
+async function convertPdfToImages(pdfFile, maxPages = 20) {
+  const arrayBuffer = await pdfFile.arrayBuffer()
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
+  const numPages = Math.min(pdf.numPages, maxPages)
+
+  console.log(`Converting PDF: ${pdf.numPages} total pages, processing ${numPages}`)
+
+  const images = []
+
+  for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+    const page = await pdf.getPage(pageNum)
+
+    // Use 1.5 scale for good quality construction drawings
+    const scale = 1.5
+    const viewport = page.getViewport({ scale })
+
+    // Create canvas
+    const canvas = document.createElement('canvas')
+    canvas.width = viewport.width
+    canvas.height = viewport.height
+    const context = canvas.getContext('2d')
+
+    // Render page to canvas
+    await page.render({
+      canvasContext: context,
+      viewport: viewport
+    }).promise
+
+    // Convert to blob
+    const blob = await new Promise(resolve => {
+      canvas.toBlob(resolve, 'image/png', 0.9)
+    })
+
+    images.push({
+      blob,
+      pageNum,
+      name: `${pdfFile.name.replace('.pdf', '')}_page_${pageNum}.png`
+    })
+  }
+
+  return images
+}
 
 /**
  * BidRounds Component
@@ -278,129 +328,136 @@ export default function BidRounds({ projectId, projectName }) {
     }
   }
 
+  async function processAndUploadImage(imageFile, roundId, originalPdfName = null) {
+    // Upload to Supabase Storage
+    const storageResult = await uploadToSupabaseStorage(imageFile, roundId)
+    console.log(`Uploaded ${imageFile.name} to storage:`, storageResult.storagePath)
+
+    // Call function to process the uploaded file
+    const response = await fetch('/.netlify/functions/process-uploaded-drawing', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project_id: projectId,
+        bid_round_id: roundId,
+        project_name: projectName,
+        storage_path: storageResult.storagePath,
+        storage_url: storageResult.storageUrl,
+        original_filename: originalPdfName || imageFile.name,
+        file_type: imageFile.type,
+        file_size: imageFile.size,
+        process_with_ai: true
+      })
+    })
+
+    const contentType = response.headers.get('content-type')
+    let result
+    if (contentType && contentType.includes('application/json')) {
+      result = await response.json()
+    } else {
+      const responseText = await response.text()
+      console.error('Non-JSON response:', responseText.substring(0, 500))
+      throw new Error('Server returned an invalid response.')
+    }
+
+    if (!response.ok) {
+      throw new Error(result.details || result.error || 'Processing failed')
+    }
+
+    return result
+  }
+
   async function handleDrawingUpload(roundId, files) {
     if (!files || files.length === 0) return
-
-    // Validate file sizes and warn about large files
-    const largeFiles = files.filter(f => f.size > MAX_DIRECT_UPLOAD_SIZE)
-
-    if (largeFiles.length > 0) {
-      const sizeMB = (largeFiles[0].size / (1024 * 1024)).toFixed(1)
-      console.log(`Large file detected (${sizeMB}MB): using direct Supabase upload`)
-    }
 
     setUploadingDrawings(true)
     setUploadProgress({ current: 0, total: files.length })
 
     let totalBidItemsCreated = 0
+    let totalPagesProcessed = 0
 
     try {
       for (let i = 0; i < files.length; i++) {
         const file = files[i]
-        setUploadProgress({ current: i + 1, total: files.length, filename: file.name, phase: 'uploading' })
 
-        let result
-
-        // For large files, upload to Supabase first, then process
-        if (file.size > MAX_DIRECT_UPLOAD_SIZE) {
-          // Step 1: Upload directly to Supabase Storage (bypasses Netlify payload limit)
-          setUploadProgress({ current: i + 1, total: files.length, filename: file.name, phase: 'uploading to storage' })
-          const storageResult = await uploadToSupabaseStorage(file, roundId)
-          console.log(`Uploaded ${file.name} to storage:`, storageResult.storagePath)
-
-          // Step 2: Call function to process the uploaded file
-          setUploadProgress({ current: i + 1, total: files.length, filename: file.name, phase: 'processing with AI' })
-          const response = await fetch('/.netlify/functions/process-uploaded-drawing', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              project_id: projectId,
-              bid_round_id: roundId,
-              project_name: projectName,
-              storage_path: storageResult.storagePath,
-              storage_url: storageResult.storageUrl,
-              original_filename: file.name,
-              file_type: file.type,
-              file_size: file.size,
-              process_with_ai: true
-            })
+        // Check if file is a PDF - convert to images first
+        if (file.type === 'application/pdf') {
+          setUploadProgress({
+            current: i + 1,
+            total: files.length,
+            filename: file.name,
+            phase: 'converting PDF to images'
           })
 
-          const contentType = response.headers.get('content-type')
-          if (contentType && contentType.includes('application/json')) {
-            result = await response.json()
-          } else {
-            const responseText = await response.text()
-            console.error('Non-JSON response:', responseText.substring(0, 500))
-            throw new Error('Server returned an invalid response. The function may not be deployed correctly.')
-          }
+          toast.loading(`Converting PDF pages to images...`, { id: 'pdf-convert' })
 
-          if (!response.ok) {
-            throw new Error(result.details || result.error || 'Processing failed')
+          try {
+            // Convert PDF to images in browser
+            const images = await convertPdfToImages(file, 20) // Max 20 pages
+            toast.dismiss('pdf-convert')
+
+            console.log(`Converted ${images.length} pages from ${file.name}`)
+
+            // Process each page image
+            for (let j = 0; j < images.length; j++) {
+              const img = images[j]
+              setUploadProgress({
+                current: i + 1,
+                total: files.length,
+                filename: `${file.name} (page ${img.pageNum}/${images.length})`,
+                phase: 'processing with AI'
+              })
+
+              // Create a File object from the blob
+              const imageFile = new File([img.blob], img.name, { type: 'image/png' })
+
+              const result = await processAndUploadImage(imageFile, roundId, file.name)
+
+              // Track bid items
+              const created = result.bid_items_created || 0
+              totalBidItemsCreated += created
+              totalPagesProcessed++
+
+              console.log(`Processed page ${img.pageNum}:`, {
+                created,
+                summary: result.summary
+              })
+            }
+          } catch (pdfError) {
+            toast.dismiss('pdf-convert')
+            console.error('PDF conversion error:', pdfError)
+            toast.error(`Failed to convert PDF: ${pdfError.message}`)
+            continue
           }
         } else {
-          // For smaller files, use direct upload (original method)
-          const formData = new FormData()
-          formData.append('file', file)
-          formData.append('project_id', projectId)
-          formData.append('bid_round_id', roundId)
-          formData.append('project_name', projectName)
-          formData.append('process_with_ai', 'true')
-
-          const response = await fetch('/.netlify/functions/upload-drawing', {
-            method: 'POST',
-            body: formData
+          // For images, process directly
+          setUploadProgress({
+            current: i + 1,
+            total: files.length,
+            filename: file.name,
+            phase: 'processing with AI'
           })
 
-          const contentType = response.headers.get('content-type')
-          if (contentType && contentType.includes('application/json')) {
-            result = await response.json()
-          } else {
-            const responseText = await response.text()
-            console.error('Non-JSON response:', responseText.substring(0, 500))
-            throw new Error('Server returned an invalid response. The function may not be deployed or configured correctly.')
-          }
+          const result = await processAndUploadImage(file, roundId)
 
-          if (!response.ok) {
-            throw new Error(result.details || result.error || 'Upload failed')
-          }
-        }
+          // Track bid items
+          const created = result.bid_items_created || 0
+          totalBidItemsCreated += created
+          totalPagesProcessed++
 
-        // Track bid items
-        const extracted = result.bid_items_extracted || 0
-        const created = result.bid_items_created || 0
-        totalBidItemsCreated += created
-
-        // Handle both single file and batch responses
-        if (result.results) {
-          result.results.forEach(r => {
-            if (r.bid_items_created) totalBidItemsCreated += r.bid_items_created
+          console.log(`Processed ${file.name}:`, {
+            created,
+            summary: result.summary
           })
-        }
-
-        // Log detailed results for debugging
-        console.log(`Processed ${file.name}:`, {
-          extracted,
-          created,
-          summary: result.summary,
-          parseError: result.parse_error,
-          drawingInfo: result.drawing_info
-        })
-
-        // Show warning if items were extracted but not saved
-        if (extracted > 0 && created === 0) {
-          console.warn(`${extracted} items extracted but none saved - check trade mapping`)
-        }
-        if (result.parse_error) {
-          console.warn('Parse error detected:', result.parse_error)
         }
       }
 
+      // Show success message
       let bidItemsMsg
       if (totalBidItemsCreated > 0) {
-        bidItemsMsg = ` and extracted ${totalBidItemsCreated} bid item(s)`
+        bidItemsMsg = ` and extracted ${totalBidItemsCreated} bid item(s) from ${totalPagesProcessed} page(s)`
       } else {
-        bidItemsMsg = ' (no bid items extracted - check Netlify function logs for details)'
+        bidItemsMsg = ` (${totalPagesProcessed} page(s) processed, no bid items extracted)`
       }
       toast.success(`Uploaded ${files.length} drawing(s)${bidItemsMsg}`)
       loadRounds()
