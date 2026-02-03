@@ -80,37 +80,38 @@ async function analyzeImage(anthropic, base64Data, mimeType, projectName) {
       type: 'text',
       text: `You are analyzing a construction drawing page${projectName ? ` for "${projectName}"` : ''}.
 
-Extract ALL bid items/scope items that a general contractor would need to solicit from subcontractors. Be thorough and comprehensive.
+Extract ALL bid items/scope items that a general contractor would need to solicit from subcontractors. Be EXHAUSTIVE - capture everything visible.
 
-IMPORTANT REQUIREMENTS:
-1. Include MATERIAL SPECIFICATIONS in descriptions (e.g., "5/8" Type X gypsum board on 3-5/8" metal studs @ 16" O.C." not just "drywall partitions")
-2. Reference SPEC SECTIONS when visible or inferable (e.g., "092116" for gypsum board assemblies)
-3. Note LOCATIONS/AREAS when shown (e.g., "Level 2 corridors", "Rooms 101-110")
-4. Include FINISH TYPES, ratings, or special requirements (e.g., "1-hour fire rated", "moisture resistant", "Level 4 finish")
-5. Capture ASSEMBLY DETAILS (e.g., framing, insulation, backing, accessories)
+EXTRACTION GUIDELINES:
+1. QUANTITY FIRST: Extract as many items as possible. More items is better than fewer detailed items.
+2. ADD DETAIL when visible: material specs, gauges, thicknesses, types, ratings, finishes
+3. SPEC SECTIONS: Include when shown on drawings or inferable (e.g., "092116" for gypsum board)
+4. LOCATIONS: Note areas, rooms, levels when visible
+5. BREAK DOWN assemblies: A wall partition should generate items for framing, insulation, GWB, taping, painting separately if visible
+6. Don't skip items just because full specs aren't visible - include what you can see
 
 CSI MasterFormat Division Codes:
 - 01: General Requirements
 - 02: Existing Conditions (demolition, hazmat abatement, site clearing)
-- 03: Concrete (cast-in-place, precast, reinforcing)
-- 04: Masonry (CMU, brick, stone)
-- 05: Metals (structural steel, misc metals, railings, stairs)
-- 06: Wood/Plastics/Composites (rough carpentry, millwork, casework)
-- 07: Thermal/Moisture Protection (roofing, waterproofing, insulation, fireproofing)
-- 08: Openings (doors, frames, hardware, windows, glazing, storefronts)
-- 09: Finishes (drywall, plaster, tile, flooring, ceilings, painting)
-- 10: Specialties (signage, lockers, toilet accessories, fire extinguishers)
-- 11: Equipment (food service, lab equipment, residential appliances)
+- 03: Concrete (cast-in-place, precast, reinforcing, polishing)
+- 04: Masonry (CMU, brick, stone, grout, reinforcing)
+- 05: Metals (structural steel, misc metals, railings, stairs, handrails)
+- 06: Wood/Plastics/Composites (rough carpentry, millwork, casework, blocking)
+- 07: Thermal/Moisture Protection (roofing, waterproofing, insulation, fireproofing, caulking)
+- 08: Openings (doors, frames, hardware, windows, glazing, storefronts, relites)
+- 09: Finishes (drywall, framing, plaster, tile, flooring, ceilings, painting, wall protection)
+- 10: Specialties (signage, lockers, toilet accessories, fire extinguishers, corner guards)
+- 11: Equipment (food service, lab equipment, fume hoods, casework)
 - 12: Furnishings (window treatments, furniture, artwork)
 - 14: Conveying Equipment (elevators, escalators, lifts)
-- 21: Fire Suppression (sprinklers, standpipes, fire pumps)
-- 22: Plumbing (fixtures, piping, water heaters, gas systems)
-- 23: HVAC (ductwork, equipment, controls, TAB)
-- 26: Electrical (power, lighting, low voltage)
-- 27: Communications (data, telecom, AV systems)
+- 21: Fire Suppression (sprinklers, standpipes, fire pumps, extinguishers)
+- 22: Plumbing (fixtures, piping, water heaters, gas systems, drains)
+- 23: HVAC (ductwork, diffusers, equipment, controls, TAB, exhaust)
+- 26: Electrical (power, lighting, receptacles, switches, panels)
+- 27: Communications (data, telecom, AV systems, paging)
 - 28: Electronic Safety/Security (fire alarm, access control, CCTV)
 - 31: Earthwork (excavation, grading, soil treatment)
-- 32: Exterior Improvements (paving, landscaping, site utilities)
+- 32: Exterior Improvements (paving, landscaping, site utilities, fencing)
 - 33: Utilities (water, sewer, storm drainage)
 
 Return JSON:
@@ -127,35 +128,64 @@ Return JSON:
       "division_code": "09",
       "trade_name": "Drywall/Metal Framing",
       "spec_section": "092116",
-      "description": "Type A partition: 5/8\" Type X GWB each side on 3-5/8\" 20ga metal studs @ 16\" O.C., R-11 batt insulation, 1-hour fire rated - Corridors Level 1",
+      "description": "Type A partition: 5/8\" Type X GWB each side on 3-5/8\" 20ga metal studs @ 16\" O.C., R-11 batt insulation, 1-hour fire rated",
       "quantity": "450",
       "unit": "LF",
       "location": "Level 1 Corridors",
       "notes": "STC 45 required per specs",
       "confidence": 0.9
+    },
+    {
+      "division_code": "09",
+      "trade_name": "Painting",
+      "spec_section": "099123",
+      "description": "Prime and paint new GWB partitions - 2 coats latex, eggshell finish",
+      "quantity": "900",
+      "unit": "SF",
+      "location": "Level 1 Corridors",
+      "notes": "",
+      "confidence": 0.7
     }
   ],
   "summary": "Brief description of drawing scope and key elements"
 }
 
-IMPORTANT: Extract 10-30+ bid items from this drawing. Be SPECIFIC with materials, assemblies, and spec references. Generic descriptions like "drywall" or "doors" are not acceptable - include full material/assembly details.`
+CRITICAL: Extract 20-50+ bid items from this drawing. Look for:
+- Wall types and partitions (each type separately)
+- Door and frame schedules (each door type)
+- Ceiling types and heights
+- Flooring types and transitions
+- MEP rough-in and fixtures
+- Casework and millwork
+- Specialties (accessories, signage, protection)
+- Demolition scope if renovation
+- Paint and finishes for each substrate`
     }
   ]
 
   const message = await anthropic.messages.create({
     model: CLAUDE_MODEL,
-    max_tokens: 8192,
-    system: `You are a senior construction estimator with 20+ years of experience preparing detailed scopes of work for subcontractor bidding.
+    max_tokens: 16384,
+    system: `You are a senior construction estimator preparing comprehensive bid item lists from construction drawings.
 
-When analyzing drawings:
-- Extract SPECIFIC material specifications (gauge, thickness, type, rating, finish)
-- Reference CSI spec sections (6-digit format like 092116, 081113, etc.)
-- Note locations, areas, and room numbers when visible
-- Include assembly details (framing, substrate, insulation, accessories)
-- Identify fire ratings, acoustic ratings, and special requirements
-- Capture quantities with appropriate units (SF, LF, EA, etc.)
+PRIORITY ORDER:
+1. COMPREHENSIVE EXTRACTION - Capture every possible scope item. Missing items is worse than imperfect descriptions.
+2. GRANULAR BREAKDOWN - Break assemblies into component parts (framing, insulation, finishes, painting as separate items)
+3. MATERIAL DETAILS - Include specs when visible (gauges, types, thicknesses, ratings)
+4. SPEC REFERENCES - Add CSI spec sections when shown or inferable (6-digit format)
+5. LOCATIONS - Note areas and rooms when identifiable
 
-Your goal is to create bid items detailed enough that a subcontractor knows exactly what to price without needing to review the drawings themselves. Return only valid JSON.`,
+For each drawing, systematically scan:
+- Title block for sheet info
+- Legends and keynotes for material specs
+- Partition types and wall schedules
+- Door/window schedules
+- Finish schedules
+- Room names for locations
+- Notes and callouts for special requirements
+- Demolition vs new work
+
+Extract 20-50+ items per drawing page. Return only valid JSON.`,
     messages: [{ role: 'user', content }]
   })
 
