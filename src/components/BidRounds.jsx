@@ -515,19 +515,18 @@ export default function BidRounds({ projectId, projectName }) {
         }
       }
 
-      // Consolidate duplicate bid items
+      // Consolidate bid items by trade using AI
       if (totalBidItemsCreated > 0) {
-        setUploadProgress({
-          current: files.length,
-          total: files.length,
-          filename: 'AI consolidating scope items...',
-          phase: 'consolidating'
-        })
-
-        toast.loading('AI is consolidating scope items...', { id: 'consolidate' })
-
         try {
-          const consolidateResponse = await fetch('/.netlify/functions/consolidate-bid-items', {
+          // First, get list of trades to consolidate
+          setUploadProgress({
+            current: files.length,
+            total: files.length,
+            filename: 'Preparing consolidation...',
+            phase: 'consolidating'
+          })
+
+          const tradesResponse = await fetch('/.netlify/functions/consolidate-bid-items', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -536,15 +535,61 @@ export default function BidRounds({ projectId, projectName }) {
             })
           })
 
-          toast.dismiss('consolidate')
+          if (tradesResponse.ok) {
+            const tradesResult = await tradesResponse.json()
+            const trades = tradesResult.trades || []
 
-          if (consolidateResponse.ok) {
-            const consolidateResult = await consolidateResponse.json()
-            console.log('Consolidation result:', consolidateResult)
+            console.log(`Found ${trades.length} trades to consolidate`)
 
-            if (consolidateResult.items_consolidated > 0) {
-              totalBidItemsCreated = consolidateResult.final_count
-              console.log(`AI consolidated ${consolidateResult.items_consolidated} items into ${consolidateResult.items_created}`)
+            let totalOriginal = 0
+            let totalFinal = 0
+
+            // Process each trade one at a time
+            for (let t = 0; t < trades.length; t++) {
+              const trade = trades[t]
+
+              setUploadProgress({
+                current: t + 1,
+                total: trades.length,
+                filename: `Consolidating ${trade.trade_name}...`,
+                phase: 'consolidating'
+              })
+
+              toast.loading(`AI consolidating ${trade.trade_name}...`, { id: 'consolidate' })
+
+              try {
+                const tradeResponse = await fetch('/.netlify/functions/consolidate-bid-items', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    bid_round_id: roundId,
+                    project_id: projectId,
+                    trade_id: trade.trade_id
+                  })
+                })
+
+                if (tradeResponse.ok) {
+                  const result = await tradeResponse.json()
+                  console.log(`Consolidated ${trade.trade_name}:`, result)
+                  totalOriginal += result.original_count || 0
+                  totalFinal += result.final_count || 0
+                }
+              } catch (tradeError) {
+                console.error(`Error consolidating ${trade.trade_name}:`, tradeError)
+              }
+
+              toast.dismiss('consolidate')
+
+              // Small delay between trades
+              if (t < trades.length - 1) {
+                await delay(500)
+              }
+            }
+
+            if (totalOriginal > 0) {
+              console.log(`Total consolidation: ${totalOriginal} -> ${totalFinal} items`)
+              // Update count to reflect consolidation
+              totalBidItemsCreated = totalBidItemsCreated - totalOriginal + totalFinal
             }
           }
         } catch (consolidateError) {
@@ -557,7 +602,7 @@ export default function BidRounds({ projectId, projectName }) {
       // Show success message
       let bidItemsMsg
       if (totalBidItemsCreated > 0) {
-        bidItemsMsg = ` and extracted ${totalBidItemsCreated} unique bid item(s) from ${totalPagesProcessed} page(s)`
+        bidItemsMsg = ` and created ${totalBidItemsCreated} scope item(s) from ${totalPagesProcessed} page(s)`
       } else {
         bidItemsMsg = ` (${totalPagesProcessed} page(s) processed, no bid items extracted)`
       }
