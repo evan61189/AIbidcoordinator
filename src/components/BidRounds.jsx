@@ -316,6 +316,51 @@ export default function BidRounds({ projectId, projectName }) {
     }
   }
 
+  async function deleteAllDrawings(roundId) {
+    const count = roundDrawings.length
+    if (!confirm(`Are you sure you want to delete all ${count} drawings from this round? This will also delete all bid items extracted from them.`)) {
+      return
+    }
+
+    try {
+      toast.loading(`Deleting ${count} drawings...`, { id: 'delete-all' })
+
+      // Get all drawing IDs and storage paths
+      const drawingIds = roundDrawings.map(d => d.id)
+      const storagePaths = roundDrawings.map(d => d.storage_path).filter(Boolean)
+
+      // Delete all associated bid items
+      await supabase
+        .from('bid_items')
+        .delete()
+        .in('source_drawing_id', drawingIds)
+
+      // Delete all drawing records
+      const { error: dbError } = await supabase
+        .from('drawings')
+        .delete()
+        .in('id', drawingIds)
+
+      if (dbError) throw dbError
+
+      // Try to delete from storage
+      if (storagePaths.length > 0) {
+        await supabase.storage
+          .from('drawings')
+          .remove(storagePaths)
+      }
+
+      toast.dismiss('delete-all')
+      toast.success(`Deleted ${count} drawings`)
+      setViewingDrawingsRoundId(null)
+      loadRounds()
+    } catch (error) {
+      toast.dismiss('delete-all')
+      console.error('Error deleting drawings:', error)
+      toast.error('Failed to delete drawings')
+    }
+  }
+
   // Maximum file size for direct function upload (smaller files go directly to function)
   const MAX_DIRECT_UPLOAD_SIZE = 800 * 1024 // 800KB - stay under Netlify's 1MB limit with some buffer
 
@@ -881,13 +926,27 @@ export default function BidRounds({ projectId, projectName }) {
             <div className="px-6 py-4 border-b flex items-center justify-between">
               <h2 className="text-lg font-semibold">
                 Drawings for {rounds.find(r => r.id === viewingDrawingsRoundId)?.name}
+                <span className="text-sm font-normal text-gray-500 ml-2">
+                  ({roundDrawings.length} files)
+                </span>
               </h2>
-              <button
-                onClick={() => setViewingDrawingsRoundId(null)}
-                className="p-1 hover:bg-gray-100 rounded"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                {roundDrawings.length > 0 && (
+                  <button
+                    onClick={() => deleteAllDrawings(viewingDrawingsRoundId)}
+                    className="px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 rounded flex items-center gap-1"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Delete All
+                  </button>
+                )}
+                <button
+                  onClick={() => setViewingDrawingsRoundId(null)}
+                  className="p-1 hover:bg-gray-100 rounded"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
             <div className="p-6 overflow-y-auto flex-1">
               {loadingDrawings ? (
