@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { DollarSign, Search, Filter, Zap } from 'lucide-react'
-import { fetchBids, fetchProjects } from '../lib/supabase'
+import { DollarSign, Search, Filter, Zap, RefreshCw, Mail } from 'lucide-react'
+import { fetchBids, fetchProjects, updateBid } from '../lib/supabase'
 import { format } from 'date-fns'
 
 export default function Bids() {
@@ -11,6 +11,7 @@ export default function Bids() {
   const [statusFilter, setStatusFilter] = useState('all')
   const [projectFilter, setProjectFilter] = useState('all')
   const [searchTerm, setSearchTerm] = useState('')
+  const [resendingId, setResendingId] = useState(null)
 
   useEffect(() => {
     loadData()
@@ -29,6 +30,56 @@ export default function Bids() {
       console.error('Error loading bids:', error)
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function resendInvitation(bid) {
+    if (!bid.subcontractor?.email) {
+      alert('No email address found for this subcontractor')
+      return
+    }
+
+    setResendingId(bid.id)
+    try {
+      const response = await fetch('/api/send-bid-invitation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to_email: bid.subcontractor.email,
+          to_name: bid.subcontractor.contact_name || bid.subcontractor.company_name,
+          subject: `Invitation to Bid: ${bid.bid_item?.project?.name}`,
+          project_name: bid.bid_item?.project?.name,
+          project_location: bid.bid_item?.project?.location,
+          bid_due_date: bid.bid_item?.project?.bid_date,
+          bid_items: [{
+            trade: bid.bid_item?.trade?.name || 'General',
+            description: bid.bid_item?.description || '',
+            quantity: bid.bid_item?.quantity || '',
+            unit: bid.bid_item?.unit || ''
+          }],
+          sender_company: 'Clipper Construction',
+          project_id: bid.bid_item?.project?.id,
+          subcontractor_id: bid.subcontractor.id,
+          bid_item_ids: [bid.bid_item?.id].filter(Boolean)
+        })
+      })
+
+      const result = await response.json()
+      if (response.ok) {
+        // Update the invitation_sent_at timestamp
+        await updateBid(bid.id, {
+          invitation_sent_at: new Date().toISOString()
+        })
+        alert('Invitation resent successfully!')
+        loadData() // Refresh the list
+      } else {
+        alert(`Failed to send: ${result.error || 'Unknown error'}`)
+      }
+    } catch (error) {
+      console.error('Error resending invitation:', error)
+      alert('Failed to resend invitation. Please try again.')
+    } finally {
+      setResendingId(null)
     }
   }
 
@@ -120,6 +171,7 @@ export default function Bids() {
                 <th>Amount</th>
                 <th>Status</th>
                 <th>Date</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -158,6 +210,23 @@ export default function Bids() {
                       : bid.invitation_sent_at
                       ? `Sent ${format(new Date(bid.invitation_sent_at), 'MMM d')}`
                       : '-'}
+                  </td>
+                  <td>
+                    {bid.status === 'invited' && (
+                      <button
+                        onClick={() => resendInvitation(bid)}
+                        disabled={resendingId === bid.id}
+                        className="btn btn-sm bg-blue-50 text-blue-600 hover:bg-blue-100 flex items-center gap-1"
+                        title="Resend invitation email"
+                      >
+                        {resendingId === bid.id ? (
+                          <RefreshCw className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Mail className="h-3 w-3" />
+                        )}
+                        {resendingId === bid.id ? 'Sending...' : 'Resend'}
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
