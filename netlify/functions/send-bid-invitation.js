@@ -145,89 +145,6 @@ export async function handler(event) {
       return ''
     }).join('')
 
-    const htmlContent = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="utf-8">
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; }
-          .header { background-color: #2c3e50; color: white; padding: 20px; text-align: center; }
-          .content { padding: 20px; }
-          .project-info { background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0; }
-          .disclaimer { background-color: #fff3cd; border: 1px solid #ffc107; padding: 15px; margin-top: 30px; font-size: 12px; }
-          .footer { text-align: center; padding: 20px; color: #666; font-size: 12px; border-top: 1px solid #ddd; margin-top: 30px; }
-        </style>
-      </head>
-      <body>
-        <div class="header">
-          <h1>Invitation to Bid</h1>
-        </div>
-
-        <div class="content">
-          <p>Dear ${to_name || 'Contractor'},</p>
-
-          <p>${sender_company ? `${sender_company} is` : 'We are'} pleased to invite you to submit a bid for the following project:</p>
-
-          <div class="project-info">
-            <h2 style="margin-top: 0; color: #2c3e50;">${project_name}</h2>
-            ${project_location ? `<p><strong>Location:</strong> ${project_location}</p>` : ''}
-            ${bid_due_date ? `<p><strong>Bid Due Date:</strong> ${bid_due_date}</p>` : ''}
-          </div>
-
-          ${custom_message ? `<p>${custom_message}</p>` : ''}
-
-          ${drawingLinksHtml}
-
-          ${bid_items && bid_items.length > 0 ? `
-            <h3>Scope of Work</h3>
-            <p>Please provide pricing for the following items:</p>
-            ${bidItemsHtml}
-          ` : ''}
-
-          ${attachments.length > 0 ? `
-            <p style="color: #28a745; font-weight: bold;">📎 ${attachments.length} drawing file(s) attached to this email</p>
-          ` : ''}
-
-          <h3>Bid Submission Requirements</h3>
-          <p>Your bid should include:</p>
-          <ul>
-            <li>Total lump sum price for the scope described</li>
-            <li>Itemized breakdown by trade/division</li>
-            <li>List of inclusions and exclusions</li>
-            <li>Lead time / delivery schedule</li>
-            <li>Any clarifications, assumptions, or alternates</li>
-            <li>Bid validity period</li>
-          </ul>
-
-          <p>Please submit your bid by <strong>${bid_due_date || 'the specified due date'}</strong>.</p>
-
-          <div class="disclaimer">
-            <h4 style="margin-top: 0; color: #856404;">NOTICE TO BIDDERS</h4>
-            ${disclaimerHtml}
-          </div>
-
-          <p style="margin-top: 30px;">If you have any questions, please contact:</p>
-          <p>
-            ${sender_name ? `<strong>${sender_name}</strong><br>` : ''}
-            ${sender_company ? `${sender_company}<br>` : ''}
-            ${sender_email ? `Email: <a href="mailto:${sender_email}">${sender_email}</a><br>` : ''}
-            ${sender_phone ? `Phone: ${sender_phone}` : ''}
-          </p>
-
-          <p>Thank you for your interest in this project.</p>
-
-          <p>Best regards,<br>
-          ${sender_name || 'The Project Team'}</p>
-        </div>
-
-        <div class="footer">
-          <p>This invitation was sent via BidCoordinator</p>
-        </div>
-      </body>
-      </html>
-    `
-
     // Fetch drawings if drawing_ids provided
     let drawings = []
     let drawingLinks = []
@@ -315,6 +232,90 @@ export async function handler(event) {
 PROJECT DRAWINGS:
 ${drawingLinks.map(d => `- ${d.name}: ${d.url}`).join('\n')}
 ` : ''
+
+    // HTML email content - must be after drawingLinksHtml is defined
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; }
+          .header { background-color: #2c3e50; color: white; padding: 20px; text-align: center; }
+          .content { padding: 20px; }
+          .project-info { background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0; }
+          .disclaimer { background-color: #fff3cd; border: 1px solid #ffc107; padding: 15px; margin-top: 30px; font-size: 12px; }
+          .footer { text-align: center; padding: 20px; color: #666; font-size: 12px; border-top: 1px solid #ddd; margin-top: 30px; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <h1>Invitation to Bid</h1>
+        </div>
+
+        <div class="content">
+          <p>Dear ${to_name || 'Contractor'},</p>
+
+          <p>${sender_company ? `${sender_company} is` : 'We are'} pleased to invite you to submit a bid for the following project:</p>
+
+          <div class="project-info">
+            <h2 style="margin-top: 0; color: #2c3e50;">${project_name}</h2>
+            ${project_location ? `<p><strong>Location:</strong> ${project_location}</p>` : ''}
+            ${bid_due_date ? `<p><strong>Bid Due Date:</strong> ${bid_due_date}</p>` : ''}
+          </div>
+
+          ${custom_message ? `<p>${custom_message}</p>` : ''}
+
+          ${drawingLinksHtml}
+
+          ${bid_items && bid_items.length > 0 ? `
+            <h3>Scope of Work</h3>
+            <p>Please provide pricing for the following items:</p>
+            ${bidItemsHtml}
+          ` : ''}
+
+          ${attachments.length > 0 ? `
+            <p style="color: #28a745; font-weight: bold;">📎 ${attachments.length} drawing file(s) attached to this email</p>
+          ` : ''}
+
+          <h3>Bid Submission Requirements</h3>
+          <p>Your bid should include:</p>
+          <ul>
+            <li>Total lump sum price for the scope described</li>
+            <li>Itemized breakdown by trade/division</li>
+            <li>List of inclusions and exclusions</li>
+            <li>Lead time / delivery schedule</li>
+            <li>Any clarifications, assumptions, or alternates</li>
+            <li>Bid validity period</li>
+          </ul>
+
+          <p>Please submit your bid by <strong>${bid_due_date || 'the specified due date'}</strong>.</p>
+
+          <div class="disclaimer">
+            <h4 style="margin-top: 0; color: #856404;">NOTICE TO BIDDERS</h4>
+            ${disclaimerHtml}
+          </div>
+
+          <p style="margin-top: 30px;">If you have any questions, please contact:</p>
+          <p>
+            ${sender_name ? `<strong>${sender_name}</strong><br>` : ''}
+            ${sender_company ? `${sender_company}<br>` : ''}
+            ${sender_email ? `Email: <a href="mailto:${sender_email}">${sender_email}</a><br>` : ''}
+            ${sender_phone ? `Phone: ${sender_phone}` : ''}
+          </p>
+
+          <p>Thank you for your interest in this project.</p>
+
+          <p>Best regards,<br>
+          ${sender_name || 'The Project Team'}</p>
+        </div>
+
+        <div class="footer">
+          <p>This invitation was sent via BidCoordinator</p>
+        </div>
+      </body>
+      </html>
+    `
 
     // Plain text version
     const textContent = `
