@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { DollarSign, Search, Filter, Zap, RefreshCw, Mail, Trash2, CheckSquare, Square, Inbox, Check, X, Eye } from 'lucide-react'
+import { DollarSign, Search, Filter, Zap, RefreshCw, Mail, Trash2, CheckSquare, Square, Inbox, Check, X, Eye, Split, Layers } from 'lucide-react'
 import { fetchBids, fetchProjects, updateBid, deleteBids, fetchDrawingsForProject, fetchBidResponses, updateBidResponse } from '../lib/supabase'
 import { format } from 'date-fns'
 
@@ -16,6 +16,7 @@ export default function Bids() {
   const [selectedBids, setSelectedBids] = useState(new Set())
   const [deleting, setDeleting] = useState(false)
   const [expandedResponse, setExpandedResponse] = useState(null)
+  const [lumpSumModal, setLumpSumModal] = useState(null) // { response, matchingBids }
 
   useEffect(() => {
     loadData()
@@ -40,7 +41,13 @@ export default function Bids() {
     }
   }
 
-  async function handleApproveResponse(response) {
+  // Check if response has usable line items (with amounts)
+  function hasUsableLineItems(response) {
+    const lineItems = response.line_items || []
+    return lineItems.some(item => (item.total || item.unit_price) > 0)
+  }
+
+  async function handleApproveResponse(response, splitMethod = null) {
     // Find ALL matching bids for this subcontractor/project
     const matchingBids = bids.filter(b =>
       b.subcontractor?.id === response.subcontractor_id &&
@@ -50,24 +57,42 @@ export default function Bids() {
 
     if (matchingBids.length === 0) {
       alert('Could not find any matching bids to update. The response will be marked as approved.')
+      await updateBidResponse(response.id, {
+        status: 'approved',
+        reviewed_at: new Date().toISOString()
+      })
+      loadData()
+      return
+    }
+
+    const lineItems = response.line_items || []
+    const hasLineItemPricing = hasUsableLineItems(response)
+
+    // If lump sum with multiple bids and no split method chosen, show options
+    if (!hasLineItemPricing && matchingBids.length > 1 && !splitMethod) {
+      setLumpSumModal({ response, matchingBids })
+      return
     }
 
     try {
       let updatedCount = 0
-      const lineItems = response.line_items || []
 
-      if (lineItems.length > 0 && matchingBids.length > 0) {
-        // Try to match line items to bids by trade name or description
+      if (hasLineItemPricing && matchingBids.length > 0) {
+        // LINE ITEM PRICING: Match each line item to its corresponding bid
+        const remainingBids = [...matchingBids]
+
         for (const lineItem of lineItems) {
           const lineItemTrade = lineItem.trade?.toLowerCase() || ''
           const lineItemDesc = lineItem.description?.toLowerCase() || ''
           const lineItemAmount = lineItem.total || lineItem.unit_price || 0
 
+          if (lineItemAmount <= 0) continue
+
           // Find best matching bid
           let bestMatch = null
           let bestScore = 0
 
-          for (const bid of matchingBids) {
+          for (const bid of remainingBids) {
             const bidTrade = bid.bid_item?.trade?.name?.toLowerCase() || ''
             const bidDesc = bid.bid_item?.description?.toLowerCase() || ''
 
@@ -95,7 +120,7 @@ export default function Bids() {
             }
           }
 
-          // Update the matched bid if we found one with any confidence
+          // Update the matched bid
           if (bestMatch && lineItemAmount > 0) {
             await updateBid(bestMatch.id, {
               amount: lineItemAmount,
@@ -103,21 +128,52 @@ export default function Bids() {
               submitted_at: new Date().toISOString()
             })
             updatedCount++
-            // Remove from matchingBids so we don't match it again
-            const idx = matchingBids.indexOf(bestMatch)
-            if (idx > -1) matchingBids.splice(idx, 1)
+            // Remove from remaining bids
+            const idx = remainingBids.indexOf(bestMatch)
+            if (idx > -1) remainingBids.splice(idx, 1)
           }
         }
-      }
+      } else if (response.total_amount && matchingBids.length > 0) {
+        // LUMP SUM PRICING: Apply based on split method
+        if (splitMethod === 'even' || matchingBids.length === 1) {
+          // Split evenly across all bid items
+          const splitAmount = Math.round((response.total_amount / matchingBids.length) * 100) / 100
 
-      // If no line items matched but we have a total, update the first bid
-      if (updatedCount === 0 && response.total_amount && matchingBids.length > 0) {
-        await updateBid(matchingBids[0].id, {
-          amount: response.total_amount,
-          status: 'submitted',
-          submitted_at: new Date().toISOString()
-        })
-        updatedCount = 1
+          for (const bid of matchingBids) {
+            await updateBid(bid.id, {
+              amount: splitAmount,
+              status: 'submitted',
+              submitted_at: new Date().toISOString(),
+              notes: matchingBids.length > 1 ? `Split from lump sum of $${response.total_amount.toLocaleString()}` : null
+            })
+            updatedCount++
+          }
+        } else if (splitMethod === 'full') {
+          // Apply full amount to first bid, mark others as included
+          const lumpSumId = crypto.randomUUID()
+
+          for (let i = 0; i < matchingBids.length; i++) {
+            const bid = matchingBids[i]
+            if (i === 0) {
+              // First bid gets the full amount
+              await updateBid(bid.id, {
+                amount: response.total_amount,
+                status: 'submitted',
+                submitted_at: new Date().toISOString(),
+                notes: `Lump sum for ${matchingBids.length} items`
+              })
+            } else {
+              // Other bids marked as included in lump sum
+              await updateBid(bid.id, {
+                amount: 0,
+                status: 'submitted',
+                submitted_at: new Date().toISOString(),
+                notes: `Included in lump sum (see ${matchingBids[0].bid_item?.trade?.name || 'first item'})`
+              })
+            }
+            updatedCount++
+          }
+        }
       }
 
       // Mark response as approved
@@ -126,7 +182,14 @@ export default function Bids() {
         reviewed_at: new Date().toISOString()
       })
 
-      alert(`Bid response approved! Updated ${updatedCount} bid(s) with amounts from line items.`)
+      setLumpSumModal(null)
+
+      const methodText = hasLineItemPricing
+        ? 'line items'
+        : splitMethod === 'even'
+          ? 'split evenly'
+          : 'lump sum'
+      alert(`Bid response approved! Updated ${updatedCount} bid(s) (${methodText}).`)
       loadData()
     } catch (error) {
       console.error('Error approving response:', error)
@@ -365,9 +428,15 @@ export default function Bids() {
                       <span className="font-bold text-2xl text-green-700">
                         ${response.total_amount?.toLocaleString() || '0'}
                       </span>
-                      {response.line_items?.length > 0 && (
-                        <span className="text-gray-500">
+                      {hasUsableLineItems(response) ? (
+                        <span className="badge bg-blue-100 text-blue-700 flex items-center gap-1">
+                          <Split className="h-3 w-3" />
                           {response.line_items.length} line item(s)
+                        </span>
+                      ) : (
+                        <span className="badge bg-purple-100 text-purple-700 flex items-center gap-1">
+                          <Layers className="h-3 w-3" />
+                          Lump Sum
                         </span>
                       )}
                       <span className={`badge ${response.ai_confidence_score >= 0.8 ? 'badge-success' : response.ai_confidence_score >= 0.5 ? 'badge-warning' : 'badge-danger'}`}>
@@ -634,6 +703,86 @@ export default function Bids() {
           <Link to="/projects" className="btn btn-primary">
             View Projects
           </Link>
+        </div>
+      )}
+
+      {/* Lump Sum Options Modal */}
+      {lumpSumModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full">
+            <div className="p-6 border-b border-gray-200">
+              <h2 className="text-xl font-bold text-gray-900">Lump Sum Bid</h2>
+              <p className="text-gray-600 mt-1">
+                This subcontractor submitted a lump sum of <strong>${lumpSumModal.response.total_amount?.toLocaleString()}</strong> for {lumpSumModal.matchingBids.length} bid items.
+              </p>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-gray-600">How would you like to apply this amount?</p>
+
+              <div className="space-y-3">
+                {/* Split Evenly Option */}
+                <button
+                  onClick={() => handleApproveResponse(lumpSumModal.response, 'even')}
+                  className="w-full p-4 border-2 rounded-lg text-left hover:border-blue-500 hover:bg-blue-50 transition-colors"
+                >
+                  <div className="flex items-start gap-3">
+                    <Split className="h-6 w-6 text-blue-600 mt-0.5" />
+                    <div>
+                      <div className="font-semibold text-gray-900">Split Evenly</div>
+                      <p className="text-sm text-gray-600 mt-1">
+                        Divide ${lumpSumModal.response.total_amount?.toLocaleString()} equally across {lumpSumModal.matchingBids.length} items
+                      </p>
+                      <p className="text-sm font-medium text-blue-600 mt-1">
+                        = ${Math.round((lumpSumModal.response.total_amount / lumpSumModal.matchingBids.length) * 100 / 100).toLocaleString()} per item
+                      </p>
+                    </div>
+                  </div>
+                </button>
+
+                {/* Full Amount Option */}
+                <button
+                  onClick={() => handleApproveResponse(lumpSumModal.response, 'full')}
+                  className="w-full p-4 border-2 rounded-lg text-left hover:border-purple-500 hover:bg-purple-50 transition-colors"
+                >
+                  <div className="flex items-start gap-3">
+                    <Layers className="h-6 w-6 text-purple-600 mt-0.5" />
+                    <div>
+                      <div className="font-semibold text-gray-900">Keep as Lump Sum</div>
+                      <p className="text-sm text-gray-600 mt-1">
+                        Apply full ${lumpSumModal.response.total_amount?.toLocaleString()} to first item, mark others as "included"
+                      </p>
+                      <p className="text-sm text-gray-500 mt-1">
+                        Good when items are bundled and can't be separated
+                      </p>
+                    </div>
+                  </div>
+                </button>
+              </div>
+
+              {/* Show the bid items this will affect */}
+              <div className="mt-4 p-3 bg-gray-50 rounded-lg">
+                <p className="text-xs font-medium text-gray-500 mb-2">AFFECTED BID ITEMS:</p>
+                <ul className="text-sm text-gray-700 space-y-1">
+                  {lumpSumModal.matchingBids.map(bid => (
+                    <li key={bid.id} className="flex items-center gap-2">
+                      <span className="w-2 h-2 bg-gray-400 rounded-full"></span>
+                      {bid.bid_item?.trade?.name}: {bid.bid_item?.description?.substring(0, 50)}...
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-gray-200 flex justify-end">
+              <button
+                onClick={() => setLumpSumModal(null)}
+                className="btn btn-secondary"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
