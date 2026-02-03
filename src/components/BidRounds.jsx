@@ -520,27 +520,35 @@ export default function BidRounds({ projectId, projectName }) {
         setUploadProgress({
           current: files.length,
           total: files.length,
-          filename: 'Consolidating duplicates...',
-          phase: 'deduplicating'
+          filename: 'AI consolidating scope items...',
+          phase: 'consolidating'
         })
+
+        toast.loading('AI is consolidating scope items...', { id: 'consolidate' })
 
         try {
           const consolidateResponse = await fetch('/.netlify/functions/consolidate-bid-items', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ bid_round_id: roundId })
+            body: JSON.stringify({
+              bid_round_id: roundId,
+              project_id: projectId
+            })
           })
+
+          toast.dismiss('consolidate')
 
           if (consolidateResponse.ok) {
             const consolidateResult = await consolidateResponse.json()
             console.log('Consolidation result:', consolidateResult)
 
-            if (consolidateResult.removed_count > 0) {
+            if (consolidateResult.items_consolidated > 0) {
               totalBidItemsCreated = consolidateResult.final_count
-              console.log(`Removed ${consolidateResult.removed_count} duplicate items`)
+              console.log(`AI consolidated ${consolidateResult.items_consolidated} items into ${consolidateResult.items_created}`)
             }
           }
         } catch (consolidateError) {
+          toast.dismiss('consolidate')
           console.error('Consolidation error:', consolidateError)
           // Don't fail the upload if consolidation fails
         }
