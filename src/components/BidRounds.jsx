@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase'
 import {
   Layers, Plus, Upload, FileText, ChevronDown, ChevronRight,
   Calendar, Clock, DollarSign, Users, RefreshCw, Check, X,
-  ArrowRight, TrendingUp, TrendingDown, Minus, Download, Eye
+  ArrowRight, TrendingUp, TrendingDown, Minus, Download, Eye, Edit, Save
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import BidLeveling from './BidLeveling'
@@ -19,6 +19,8 @@ export default function BidRounds({ projectId, projectName }) {
   const [showNewRoundModal, setShowNewRoundModal] = useState(false)
   const [uploadingDrawings, setUploadingDrawings] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(null)
+  const [editingRoundId, setEditingRoundId] = useState(null)
+  const [editingRoundName, setEditingRoundName] = useState('')
   const fileInputRef = useRef(null)
 
   useEffect(() => {
@@ -138,8 +140,91 @@ export default function BidRounds({ projectId, projectName }) {
     }
   }
 
+  async function updateRoundName(roundId, newName) {
+    if (!newName.trim()) {
+      toast.error('Round name cannot be empty')
+      return
+    }
+
+    try {
+      const { error } = await supabase
+        .from('bid_rounds')
+        .update({ name: newName.trim() })
+        .eq('id', roundId)
+
+      if (error) throw error
+
+      toast.success('Round name updated')
+      setEditingRoundId(null)
+      setEditingRoundName('')
+      loadRounds()
+    } catch (error) {
+      console.error('Error updating round name:', error)
+      toast.error('Failed to update round name')
+    }
+  }
+
+  function startEditingRound(round, e) {
+    e.stopPropagation()
+    setEditingRoundId(round.id)
+    setEditingRoundName(round.name)
+  }
+
+  function cancelEditingRound(e) {
+    e.stopPropagation()
+    setEditingRoundId(null)
+    setEditingRoundName('')
+  }
+
+  function handleSaveRoundName(roundId, e) {
+    e.stopPropagation()
+    updateRoundName(roundId, editingRoundName)
+  }
+
+  // Maximum file size for direct function upload (smaller files go directly to function)
+  const MAX_DIRECT_UPLOAD_SIZE = 800 * 1024 // 800KB - stay under Netlify's 1MB limit with some buffer
+
+  async function uploadToSupabaseStorage(file, roundId) {
+    const timestamp = Date.now()
+    const sanitizedFilename = file.name.replace(/[^a-zA-Z0-9.-]/g, '_')
+    const storagePath = `projects/${projectId}/rounds/${roundId}/${timestamp}_${sanitizedFilename}`
+
+    const { data, error } = await supabase.storage
+      .from('drawings')
+      .upload(storagePath, file, {
+        contentType: file.type,
+        upsert: false
+      })
+
+    if (error) {
+      console.error('Storage upload error:', error)
+      throw new Error(`Failed to upload file to storage: ${error.message}`)
+    }
+
+    // Get public URL
+    const { data: urlData } = supabase.storage
+      .from('drawings')
+      .getPublicUrl(storagePath)
+
+    return {
+      storagePath: data.path,
+      storageUrl: urlData.publicUrl,
+      fileSize: file.size,
+      mimeType: file.type
+    }
+  }
+
   async function handleDrawingUpload(roundId, files) {
     if (!files || files.length === 0) return
+
+    // Validate file sizes and warn about large files
+    const totalSize = files.reduce((sum, f) => sum + f.size, 0)
+    const largeFiles = files.filter(f => f.size > MAX_DIRECT_UPLOAD_SIZE)
+
+    if (largeFiles.length > 0) {
+      const sizeMB = (largeFiles[0].size / (1024 * 1024)).toFixed(1)
+      console.log(`Large file detected (${sizeMB}MB): using direct Supabase upload`)
+    }
 
     setUploadingDrawings(true)
     setUploadProgress({ current: 0, total: files.length })
@@ -147,27 +232,76 @@ export default function BidRounds({ projectId, projectName }) {
     try {
       for (let i = 0; i < files.length; i++) {
         const file = files[i]
-        setUploadProgress({ current: i + 1, total: files.length, filename: file.name })
+        setUploadProgress({ current: i + 1, total: files.length, filename: file.name, phase: 'uploading' })
 
-        const formData = new FormData()
-        formData.append('file', file)
-        formData.append('project_id', projectId)
-        formData.append('bid_round_id', roundId)
-        formData.append('project_name', projectName)
-        formData.append('process_with_ai', 'true')
+        let result
 
-        const response = await fetch('/api/upload-drawing', {
-          method: 'POST',
-          body: formData
-        })
+        // For large files, upload to Supabase first, then process
+        if (file.size > MAX_DIRECT_UPLOAD_SIZE) {
+          // Step 1: Upload directly to Supabase Storage (bypasses Netlify payload limit)
+          setUploadProgress({ current: i + 1, total: files.length, filename: file.name, phase: 'uploading to storage' })
+          const storageResult = await uploadToSupabaseStorage(file, roundId)
+          console.log(`Uploaded ${file.name} to storage:`, storageResult.storagePath)
 
-        if (!response.ok) {
-          const error = await response.json()
-          throw new Error(error.details || 'Upload failed')
+          // Step 2: Call function to process the uploaded file
+          setUploadProgress({ current: i + 1, total: files.length, filename: file.name, phase: 'processing with AI' })
+          const response = await fetch('/.netlify/functions/process-uploaded-drawing', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              project_id: projectId,
+              bid_round_id: roundId,
+              project_name: projectName,
+              storage_path: storageResult.storagePath,
+              storage_url: storageResult.storageUrl,
+              original_filename: file.name,
+              file_type: file.type,
+              file_size: file.size,
+              process_with_ai: true
+            })
+          })
+
+          const contentType = response.headers.get('content-type')
+          if (contentType && contentType.includes('application/json')) {
+            result = await response.json()
+          } else {
+            const responseText = await response.text()
+            console.error('Non-JSON response:', responseText.substring(0, 500))
+            throw new Error('Server returned an invalid response. The function may not be deployed correctly.')
+          }
+
+          if (!response.ok) {
+            throw new Error(result.details || result.error || 'Processing failed')
+          }
+        } else {
+          // For smaller files, use direct upload (original method)
+          const formData = new FormData()
+          formData.append('file', file)
+          formData.append('project_id', projectId)
+          formData.append('bid_round_id', roundId)
+          formData.append('project_name', projectName)
+          formData.append('process_with_ai', 'true')
+
+          const response = await fetch('/.netlify/functions/upload-drawing', {
+            method: 'POST',
+            body: formData
+          })
+
+          const contentType = response.headers.get('content-type')
+          if (contentType && contentType.includes('application/json')) {
+            result = await response.json()
+          } else {
+            const responseText = await response.text()
+            console.error('Non-JSON response:', responseText.substring(0, 500))
+            throw new Error('Server returned an invalid response. The function may not be deployed or configured correctly.')
+          }
+
+          if (!response.ok) {
+            throw new Error(result.details || result.error || 'Upload failed')
+          }
         }
 
-        const result = await response.json()
-        console.log(`Uploaded ${file.name}:`, result)
+        console.log(`Processed ${file.name}:`, result)
       }
 
       toast.success(`Uploaded ${files.length} drawing(s)`)
@@ -257,7 +391,7 @@ export default function BidRounds({ projectId, projectName }) {
                 {/* Round Header */}
                 <button
                   onClick={() => setExpandedRound(expandedRound === round.id ? null : round.id)}
-                  className="w-full px-6 py-4 flex items-center justify-between hover:bg-gray-50"
+                  className="w-full px-6 py-4 flex items-center justify-between hover:bg-gray-50 group"
                 >
                   <div className="flex items-center gap-4">
                     {expandedRound === round.id ? (
@@ -267,7 +401,46 @@ export default function BidRounds({ projectId, projectName }) {
                     )}
                     <div className="text-left">
                       <div className="flex items-center gap-2">
-                        <span className="font-medium text-gray-900">{round.name}</span>
+                        {editingRoundId === round.id ? (
+                          <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                            <input
+                              type="text"
+                              value={editingRoundName}
+                              onChange={(e) => setEditingRoundName(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleSaveRoundName(round.id, e)
+                                if (e.key === 'Escape') cancelEditingRound(e)
+                              }}
+                              className="px-2 py-1 border rounded text-sm font-medium focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                              autoFocus
+                            />
+                            <button
+                              onClick={(e) => handleSaveRoundName(round.id, e)}
+                              className="p-1 text-green-600 hover:bg-green-50 rounded"
+                              title="Save"
+                            >
+                              <Check className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={cancelEditingRound}
+                              className="p-1 text-gray-500 hover:bg-gray-100 rounded"
+                              title="Cancel"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <span className="font-medium text-gray-900">{round.name}</span>
+                            <button
+                              onClick={(e) => startEditingRound(round, e)}
+                              className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                              title="Edit name"
+                            >
+                              <Edit className="w-3.5 h-3.5" />
+                            </button>
+                          </>
+                        )}
                         <span className={`px-2 py-0.5 rounded-full text-xs ${statusColors[round.status]}`}>
                           {round.status}
                         </span>
@@ -333,9 +506,16 @@ export default function BidRounds({ projectId, projectName }) {
                       <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded">
                         <div className="flex items-center gap-2 text-sm text-blue-800">
                           <RefreshCw className="w-4 h-4 animate-spin" />
-                          Uploading {uploadProgress.current} of {uploadProgress.total}...
+                          <span>
+                            {uploadProgress.phase === 'uploading to storage'
+                              ? 'Uploading to storage'
+                              : uploadProgress.phase === 'processing with AI'
+                              ? 'Processing with AI (this may take a minute for multi-page PDFs)'
+                              : 'Uploading'
+                            } ({uploadProgress.current} of {uploadProgress.total})...
+                          </span>
                           {uploadProgress.filename && (
-                            <span className="text-blue-600">{uploadProgress.filename}</span>
+                            <span className="text-blue-600 truncate max-w-xs">{uploadProgress.filename}</span>
                           )}
                         </div>
                       </div>
