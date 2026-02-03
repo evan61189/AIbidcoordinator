@@ -421,7 +421,7 @@ export default function ProjectDetail() {
                                 />
                               </td>
                               <td className="font-medium">{item.item_number || '-'}</td>
-                              <td className="max-w-xs truncate" title={item.description}>{item.description}</td>
+                              <td className="max-w-md whitespace-normal">{item.description}</td>
                               <td>
                                 {item.estimated_cost
                                   ? `$${Number(item.estimated_cost).toLocaleString()}`
