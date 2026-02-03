@@ -190,14 +190,14 @@ export default function SubcontractorDetail() {
         </div>
         {sub.bids?.length > 0 ? (
           <div className="table-container">
-            <table className="table">
+            <table className="table table-fixed w-full">
               <thead>
                 <tr>
-                  <th>Project</th>
-                  <th>Description</th>
-                  <th>Amount</th>
-                  <th>Status</th>
-                  <th>Date</th>
+                  <th className="w-1/5">Project</th>
+                  <th className="w-2/5">Description</th>
+                  <th className="w-24">Amount</th>
+                  <th className="w-24">Status</th>
+                  <th className="w-24">Date</th>
                 </tr>
               </thead>
               <tbody>
@@ -211,7 +211,7 @@ export default function SubcontractorDetail() {
                         {bid.bid_item?.project?.name || 'Unknown'}
                       </Link>
                     </td>
-                    <td className="max-w-md whitespace-normal">{bid.bid_item?.description}</td>
+                    <td className="whitespace-normal break-words">{bid.bid_item?.description}</td>
                     <td className="font-medium">
                       {bid.amount ? `$${Number(bid.amount).toLocaleString()}` : '-'}
                     </td>
