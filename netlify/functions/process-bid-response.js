@@ -438,21 +438,55 @@ export async function handler(event) {
     // Parse the incoming email data
     const { fields, attachments } = await parseInboundEmail(event)
 
+    // Debug: log all fields and their lengths
     console.log('Parsed email fields:', Object.keys(fields))
+    for (const [key, value] of Object.entries(fields)) {
+      const preview = typeof value === 'string' ? value.substring(0, 100) : JSON.stringify(value).substring(0, 100)
+      console.log(`  Field "${key}": ${typeof value === 'string' ? value.length : 'object'} chars - "${preview}..."`)
+    }
     console.log('Attachments count:', attachments.length)
 
-    // Extract email details
-    const fromEmail = fields.from?.match(/<(.+)>/)?.[1] || fields.from || ''
+    // Extract email details - check multiple possible field names
+    const fromEmail = fields.from?.match(/<(.+)>/)?.[1] || fields.from || fields.sender || ''
     const fromName = fields.from?.replace(/<.+>/, '').trim() || ''
-    const toEmail = fields.to || ''
+    const toEmail = fields.to || fields.recipient || ''
     const subject = fields.subject || ''
-    const bodyPlain = fields.text || ''
-    const bodyHtml = fields.html || ''
+
+    // Try multiple body fields - SendGrid uses 'text' for plain and 'html' for HTML
+    // Also check 'body', 'body-plain', 'body-html' as fallbacks
+    const bodyPlain = fields.text || fields['body-plain'] || fields.body || ''
+    const bodyHtml = fields.html || fields['body-html'] || ''
+
+    // If raw MIME mode is enabled, body is in 'email' field
+    let rawMimeBody = ''
+    if (fields.email && (!bodyPlain && !bodyHtml)) {
+      console.log('Raw MIME message detected, extracting body...')
+      // Simple extraction from MIME - look for content after blank line
+      const mimeLines = fields.email.split('\n')
+      let inBody = false
+      const bodyLines = []
+      for (const line of mimeLines) {
+        if (inBody) {
+          bodyLines.push(line)
+        } else if (line.trim() === '') {
+          inBody = true
+        }
+      }
+      rawMimeBody = bodyLines.join('\n').trim()
+      console.log(`Extracted ${rawMimeBody.length} chars from raw MIME`)
+    }
+
+    const finalBody = bodyPlain || bodyHtml || rawMimeBody
 
     console.log(`From: ${fromEmail}`)
     console.log(`Subject: ${subject}`)
-    console.log(`Body length: ${bodyPlain.length} chars`)
-    console.log(`Attachments: ${attachments.map(a => `${a.filename} (${a.contentType})`).join(', ')}`)
+    console.log(`Body plain length: ${bodyPlain.length} chars`)
+    console.log(`Body HTML length: ${bodyHtml.length} chars`)
+    console.log(`Final body length: ${finalBody.length} chars`)
+    if (finalBody) {
+      console.log(`Body preview: "${finalBody.substring(0, 200)}..."`)
+    }
+    console.log(`Attachments: ${attachments.map(a => `${a.filename} (${a.contentType})`).join(', ') || 'none'}`)
 
     // Find matching project/subcontractor
     const context = await findMatchingContext(fromEmail, subject)
@@ -463,7 +497,7 @@ export async function handler(event) {
 
     // Analyze with AI - both body and attachments
     console.log('Starting AI analysis...')
-    const parsedBid = await analyzeWithAI(bodyPlain || bodyHtml, attachments)
+    const parsedBid = await analyzeWithAI(finalBody, attachments)
     console.log('AI analysis complete:', {
       total: parsedBid.total_amount,
       lineItems: parsedBid.line_items?.length || 0,
