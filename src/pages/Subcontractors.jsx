@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { Plus, Search, Users, Star, Phone, Mail, MapPin } from 'lucide-react'
+import { Plus, Search, Users, Star, Phone, Mail, MapPin, Upload } from 'lucide-react'
 import { fetchSubcontractors, fetchTrades } from '../lib/supabase'
+import SubcontractorBulkUpload from '../components/SubcontractorBulkUpload'
 
 export default function Subcontractors() {
   const [subcontractors, setSubcontractors] = useState([])
@@ -10,6 +11,7 @@ export default function Subcontractors() {
   const [searchTerm, setSearchTerm] = useState('')
   const [tradeFilter, setTradeFilter] = useState('all')
   const [showInactive, setShowInactive] = useState(false)
+  const [showBulkUpload, setShowBulkUpload] = useState(false)
 
   useEffect(() => {
     loadData()
@@ -51,10 +53,19 @@ export default function Subcontractors() {
           <h1 className="text-2xl font-bold text-gray-900">Subcontractors</h1>
           <p className="text-gray-600">Manage your subcontractor database</p>
         </div>
-        <Link to="/subcontractors/new" className="btn btn-primary flex items-center gap-2 self-start">
-          <Plus className="h-4 w-4" />
-          Add Subcontractor
-        </Link>
+        <div className="flex gap-2 self-start">
+          <button
+            onClick={() => setShowBulkUpload(true)}
+            className="btn btn-secondary flex items-center gap-2"
+          >
+            <Upload className="h-4 w-4" />
+            Bulk Import
+          </button>
+          <Link to="/subcontractors/new" className="btn btn-primary flex items-center gap-2">
+            <Plus className="h-4 w-4" />
+            Add Subcontractor
+          </Link>
+        </div>
       </div>
 
       {/* Filters */}
@@ -180,6 +191,18 @@ export default function Subcontractors() {
             </Link>
           )}
         </div>
+      )}
+
+      {/* Bulk Upload Modal */}
+      {showBulkUpload && (
+        <SubcontractorBulkUpload
+          trades={trades}
+          onClose={() => setShowBulkUpload(false)}
+          onSuccess={() => {
+            setShowBulkUpload(false)
+            loadData()
+          }}
+        />
       )}
     </div>
   )

@@ -5,8 +5,9 @@ import {
   Calendar, MapPin, Building2, Download, ChevronDown, ChevronRight, Trash2,
   Search, Mail, Check, X
 } from 'lucide-react'
-import { fetchProject, fetchTrades, createBidItem, fetchSubcontractors, createBid } from '../lib/supabase'
+import { fetchProject, fetchTrades, createBidItem, fetchSubcontractors, createBid, supabase } from '../lib/supabase'
 import BidLeveling from '../components/BidLeveling'
+import BidRounds from '../components/BidRounds'
 import { format } from 'date-fns'
 import toast from 'react-hot-toast'
 
@@ -19,6 +20,8 @@ export default function ProjectDetail() {
   const [showAddItem, setShowAddItem] = useState(false)
   const [showInviteModal, setShowInviteModal] = useState(false)
   const [subcontractors, setSubcontractors] = useState([])
+  const [selectedItemsForDeletion, setSelectedItemsForDeletion] = useState([])
+  const [deletingItems, setDeletingItems] = useState(false)
 
   useEffect(() => {
     loadProject()
@@ -61,6 +64,76 @@ export default function ProjectDetail() {
       setSubcontractors(data || [])
     } catch (error) {
       console.error('Error loading subcontractors:', error)
+    }
+  }
+
+  // Toggle item selection for deletion
+  function toggleItemSelection(itemId) {
+    setSelectedItemsForDeletion(prev =>
+      prev.includes(itemId)
+        ? prev.filter(id => id !== itemId)
+        : [...prev, itemId]
+    )
+  }
+
+  // Select all bid items for deletion
+  function selectAllItems() {
+    const allIds = project?.bid_items?.map(item => item.id) || []
+    setSelectedItemsForDeletion(allIds)
+  }
+
+  // Clear selection
+  function clearItemSelection() {
+    setSelectedItemsForDeletion([])
+  }
+
+  // Delete selected bid items
+  async function deleteSelectedItems() {
+    if (selectedItemsForDeletion.length === 0) {
+      toast.error('No items selected')
+      return
+    }
+
+    const confirmMsg = `Are you sure you want to delete ${selectedItemsForDeletion.length} bid item(s)? This cannot be undone.`
+    if (!window.confirm(confirmMsg)) return
+
+    setDeletingItems(true)
+    try {
+      const { error } = await supabase
+        .from('bid_items')
+        .delete()
+        .in('id', selectedItemsForDeletion)
+
+      if (error) throw error
+
+      toast.success(`Deleted ${selectedItemsForDeletion.length} bid item(s)`)
+      setSelectedItemsForDeletion([])
+      loadProject() // Refresh the project data
+    } catch (error) {
+      console.error('Error deleting items:', error)
+      toast.error('Failed to delete items')
+    } finally {
+      setDeletingItems(false)
+    }
+  }
+
+  // Delete a single bid item
+  async function deleteBidItem(itemId) {
+    if (!window.confirm('Are you sure you want to delete this bid item?')) return
+
+    try {
+      const { error } = await supabase
+        .from('bid_items')
+        .delete()
+        .eq('id', itemId)
+
+      if (error) throw error
+
+      toast.success('Bid item deleted')
+      loadProject()
+    } catch (error) {
+      console.error('Error deleting item:', error)
+      toast.error('Failed to delete item')
     }
   }
 
@@ -211,8 +284,30 @@ export default function ProjectDetail() {
       {/* Bid Items by Trade */}
       <div className="card">
         <div className="p-4 border-b border-gray-200 flex items-center justify-between">
-          <h2 className="font-semibold text-gray-900">Bid Items by Trade</h2>
+          <div>
+            <h2 className="font-semibold text-gray-900">Bid Items by Trade</h2>
+            {project?.bid_items?.length > 0 && (
+              <p className="text-sm text-gray-500 mt-1">
+                {project.bid_items.length} items total
+                {selectedItemsForDeletion.length > 0 && (
+                  <span className="ml-2 text-primary-600">
+                    ({selectedItemsForDeletion.length} selected)
+                  </span>
+                )}
+              </p>
+            )}
+          </div>
           <div className="flex gap-2">
+            {selectedItemsForDeletion.length > 0 && (
+              <button
+                onClick={deleteSelectedItems}
+                disabled={deletingItems}
+                className="btn bg-red-600 text-white hover:bg-red-700 flex items-center gap-2"
+              >
+                <Trash2 className="h-4 w-4" />
+                {deletingItems ? 'Deleting...' : `Delete (${selectedItemsForDeletion.length})`}
+              </button>
+            )}
             <button
               onClick={() => {
                 loadSubcontractors()
@@ -232,6 +327,29 @@ export default function ProjectDetail() {
             </button>
           </div>
         </div>
+
+        {/* Selection controls */}
+        {project?.bid_items?.length > 0 && (
+          <div className="px-4 py-2 bg-gray-50 border-b flex items-center gap-4 text-sm">
+            <button
+              onClick={selectAllItems}
+              className="text-primary-600 hover:text-primary-800"
+            >
+              Select All ({project.bid_items.length})
+            </button>
+            {selectedItemsForDeletion.length > 0 && (
+              <>
+                <span className="text-gray-300">|</span>
+                <button
+                  onClick={clearItemSelection}
+                  className="text-gray-600 hover:text-gray-800"
+                >
+                  Clear Selection
+                </button>
+              </>
+            )}
+          </div>
+        )}
 
         <div className="divide-y divide-gray-100">
           {Object.keys(bidItemsByTrade).length > 0 ? (
@@ -261,12 +379,27 @@ export default function ProjectDetail() {
                     <table className="table">
                       <thead>
                         <tr>
+                          <th className="w-10">
+                            <input
+                              type="checkbox"
+                              checked={items.every(item => selectedItemsForDeletion.includes(item.id))}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setSelectedItemsForDeletion(prev => [...new Set([...prev, ...items.map(i => i.id)])])
+                                } else {
+                                  setSelectedItemsForDeletion(prev => prev.filter(id => !items.find(i => i.id === id)))
+                                }
+                              }}
+                              className="rounded"
+                            />
+                          </th>
                           <th>Item</th>
                           <th>Description</th>
                           <th>Est. Cost</th>
                           <th>Bids</th>
                           <th>Lowest</th>
                           <th>Status</th>
+                          <th className="w-10"></th>
                         </tr>
                       </thead>
                       <tbody>
@@ -275,11 +408,20 @@ export default function ProjectDetail() {
                           const lowestBid = submittedBids.length > 0
                             ? Math.min(...submittedBids.map(b => Number(b.amount) || Infinity))
                             : null
+                          const isSelected = selectedItemsForDeletion.includes(item.id)
 
                           return (
-                            <tr key={item.id}>
+                            <tr key={item.id} className={isSelected ? 'bg-primary-50' : ''}>
+                              <td>
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => toggleItemSelection(item.id)}
+                                  className="rounded"
+                                />
+                              </td>
                               <td className="font-medium">{item.item_number || '-'}</td>
-                              <td className="max-w-xs truncate">{item.description}</td>
+                              <td className="max-w-xs truncate" title={item.description}>{item.description}</td>
                               <td>
                                 {item.estimated_cost
                                   ? `$${Number(item.estimated_cost).toLocaleString()}`
@@ -299,6 +441,15 @@ export default function ProjectDetail() {
                                 }`}>
                                   {item.status}
                                 </span>
+                              </td>
+                              <td>
+                                <button
+                                  onClick={() => deleteBidItem(item.id)}
+                                  className="p-1 text-gray-400 hover:text-red-600 rounded"
+                                  title="Delete item"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
                               </td>
                             </tr>
                           )
@@ -324,8 +475,8 @@ export default function ProjectDetail() {
         </div>
       </div>
 
-      {/* Bid Leveling - Compare subcontractor responses */}
-      <BidLeveling projectId={id} projectName={project?.name} />
+      {/* Bid Rounds - Manage pricing rounds and drawing versions */}
+      <BidRounds projectId={id} projectName={project?.name} />
 
       {/* Add Bid Item Modal */}
       {showAddItem && (
@@ -523,6 +674,31 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
   const [selectedSubs, setSelectedSubs] = useState([])
   const [loading, setLoading] = useState(false)
   const [sendEmails, setSendEmails] = useState(true)
+  const [drawings, setDrawings] = useState([])
+  const [selectedDrawings, setSelectedDrawings] = useState([])
+  const [attachDrawings, setAttachDrawings] = useState(true)
+  const [useDrawingLinks, setUseDrawingLinks] = useState(false)
+
+  // Load drawings for this project
+  useEffect(() => {
+    async function loadDrawings() {
+      try {
+        const { data } = await supabase
+          .from('drawings')
+          .select('id, original_filename, drawing_number, title, discipline, file_size, storage_url, is_current')
+          .eq('project_id', projectId)
+          .eq('is_current', true)
+          .order('discipline')
+
+        setDrawings(data || [])
+        // Select all by default
+        setSelectedDrawings((data || []).map(d => d.id))
+      } catch (error) {
+        console.error('Error loading drawings:', error)
+      }
+    }
+    loadDrawings()
+  }, [projectId])
 
   // Filter bid items by search query
   const filteredItems = bidItems.filter(item => {
@@ -644,7 +820,10 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
                 // Tracking for reply matching
                 project_id: project?.id,
                 subcontractor_id: sub.id,
-                bid_item_ids: selectedItemsData.map(item => item?.id).filter(Boolean)
+                bid_item_ids: selectedItemsData.map(item => item?.id).filter(Boolean),
+                // Drawing attachments
+                drawing_ids: attachDrawings ? selectedDrawings : [],
+                include_drawing_links: useDrawingLinks
               })
             })
 
