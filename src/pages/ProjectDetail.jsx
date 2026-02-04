@@ -1099,7 +1099,7 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
                 ) : (
                   <>
                     <Mail className="h-4 w-4" />
-                    Send {selectedItems.length * selectedSubs.length} Invitation(s)
+                    Send {selectedSubs.length} Invitation(s)
                   </>
                 )}
               </button>

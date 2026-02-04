@@ -1,13 +1,14 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { DollarSign, Search, Filter, Zap, RefreshCw, Mail, Trash2, CheckSquare, Square, Inbox, Check, X, Eye, Split, Layers, Package } from 'lucide-react'
-import { fetchBids, fetchProjects, updateBid, deleteBids, fetchDrawingsForProject, fetchBidResponses, updateBidResponse, fetchPackageBids, approvePackageBid, rejectPackageBid } from '../lib/supabase'
+import { DollarSign, Search, Filter, Zap, RefreshCw, Mail, Trash2, CheckSquare, Square, Inbox, Check, X, Eye, Split, Layers, Package, Clock, Send } from 'lucide-react'
+import { fetchBids, fetchProjects, updateBid, deleteBids, fetchDrawingsForProject, fetchBidResponses, updateBidResponse, fetchPackageBids, approvePackageBid, rejectPackageBid, fetchPendingInvitations } from '../lib/supabase'
 import { format } from 'date-fns'
 
 export default function Bids() {
   const [bids, setBids] = useState([])
   const [bidResponses, setBidResponses] = useState([])
   const [packageBids, setPackageBids] = useState([])
+  const [pendingInvitations, setPendingInvitations] = useState([])
   const [projects, setProjects] = useState([])
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState('all')
@@ -26,16 +27,18 @@ export default function Bids() {
   async function loadData() {
     setLoading(true)
     try {
-      const [bidsData, projectsData, responsesData, packageBidsData] = await Promise.all([
+      const [bidsData, projectsData, responsesData, packageBidsData, invitationsData] = await Promise.all([
         fetchBids({ status: statusFilter !== 'all' ? statusFilter : undefined }),
         fetchProjects('bidding'),
         fetchBidResponses('pending_review'),
-        fetchPackageBids('pending_approval')
+        fetchPackageBids('pending_approval'),
+        fetchPendingInvitations()
       ])
       setBids(bidsData || [])
       setProjects(projectsData || [])
       setBidResponses(responsesData || [])
       setPackageBids(packageBidsData || [])
+      setPendingInvitations(invitationsData || [])
       setSelectedBids(new Set()) // Clear selection on reload
     } catch (error) {
       console.error('Error loading bids:', error)
@@ -392,6 +395,70 @@ export default function Bids() {
           Quick Entry
         </Link>
       </div>
+
+      {/* Pending Invitations */}
+      {pendingInvitations.length > 0 && (
+        <div className="card border-2 border-amber-200 bg-amber-50">
+          <div className="p-4 border-b border-amber-200">
+            <div className="flex items-center gap-2">
+              <Send className="h-5 w-5 text-amber-600" />
+              <h2 className="text-lg font-semibold text-amber-800">
+                Pending Invitations ({pendingInvitations.length})
+              </h2>
+            </div>
+            <p className="text-sm text-amber-600 mt-1">
+              Invitations sent to subcontractors awaiting responses.
+            </p>
+          </div>
+          <div className="divide-y divide-amber-200">
+            {pendingInvitations.map(invitation => (
+              <div key={invitation.id} className="p-4">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-semibold text-gray-900">
+                        {invitation.subcontractor?.company_name || invitation.to_email || 'Unknown'}
+                      </span>
+                      <span className="text-gray-400">•</span>
+                      <span className="text-gray-600">
+                        {invitation.project?.name || 'Unknown Project'}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-4 text-sm">
+                      {invitation.package_ids?.length > 0 && (
+                        <span className="badge bg-amber-100 text-amber-800 flex items-center gap-1">
+                          <Package className="h-3 w-3" />
+                          {invitation.package_ids.length} package(s)
+                        </span>
+                      )}
+                      <span className={`badge ${
+                        invitation.status === 'opened' ? 'bg-green-100 text-green-700' :
+                        invitation.status === 'delivered' ? 'bg-blue-100 text-blue-700' :
+                        'bg-gray-100 text-gray-700'
+                      }`}>
+                        {invitation.status === 'opened' ? 'Opened' :
+                         invitation.status === 'delivered' ? 'Delivered' : 'Sent'}
+                      </span>
+                      <span className="text-gray-400 flex items-center gap-1">
+                        <Clock className="h-3 w-3" />
+                        {invitation.sent_at && format(new Date(invitation.sent_at), 'MMM d, h:mm a')}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Link
+                      to={`/projects/${invitation.project_id}`}
+                      className="btn btn-sm bg-gray-100 text-gray-700 hover:bg-gray-200"
+                    >
+                      View Project
+                    </Link>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Incoming Bid Responses */}
       {bidResponses.length > 0 && (
