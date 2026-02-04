@@ -9,6 +9,18 @@ import {
 import toast from 'react-hot-toast'
 import BidLeveling from './BidLeveling'
 
+// Polyfill for Promise.withResolvers (needed by pdfjs-dist 5.x, not available in Safari < 17.4)
+if (typeof Promise.withResolvers !== 'function') {
+  Promise.withResolvers = function() {
+    let resolve, reject
+    const promise = new Promise((res, rej) => {
+      resolve = res
+      reject = rej
+    })
+    return { promise, resolve, reject }
+  }
+}
+
 // Lazy load PDF.js only when needed
 let pdfjsLib = null
 async function loadPdfJs() {
@@ -471,6 +483,65 @@ export default function BidRounds({ projectId, projectName }) {
         if (file.type === 'application/pdf') {
           let pdf
           try {
+            setUploadProgress({
+              current: i + 1,
+              total: files.length,
+              filename: file.name,
+              phase: 'uploading original PDF'
+            })
+
+            // First, upload the original PDF to drawings/specifications folder for email attachments
+            const timestamp = Date.now()
+            const sanitizedFilename = file.name.replace(/[^a-zA-Z0-9.-]/g, '_')
+            const pdfStoragePath = `projects/${projectId}/drawings-specifications/${timestamp}_${sanitizedFilename}`
+
+            const { data: pdfUpload, error: pdfUploadError } = await supabase.storage
+              .from('drawings')
+              .upload(pdfStoragePath, file, {
+                contentType: 'application/pdf',
+                upsert: false
+              })
+
+            if (pdfUploadError) {
+              console.error('PDF storage upload error:', pdfUploadError)
+            }
+
+            const { data: pdfUrlData } = supabase.storage
+              .from('drawings')
+              .getPublicUrl(pdfStoragePath)
+
+            const pdfStorageResult = {
+              storagePath: pdfUpload?.path || pdfStoragePath,
+              storageUrl: pdfUrlData.publicUrl,
+              fileSize: file.size,
+              mimeType: 'application/pdf'
+            }
+            console.log(`Original PDF uploaded to drawings-specifications folder:`, pdfStorageResult.storagePath)
+
+            // Create a drawing record for the original PDF (for email attachments)
+            const { data: pdfDrawing, error: pdfDrawingError } = await supabase
+              .from('drawings')
+              .insert({
+                project_id: projectId,
+                bid_round_id: roundId,
+                original_filename: file.name,
+                filename: file.name,
+                storage_path: pdfStorageResult.storagePath,
+                storage_url: pdfStorageResult.storageUrl,
+                file_size: pdfStorageResult.fileSize,
+                file_type: 'pdf',  // Use 'pdf' for original PDF files (column is VARCHAR(10))
+                is_current: true,
+                ai_processed: false
+              })
+              .select()
+              .single()
+
+            if (pdfDrawingError) {
+              console.warn('Error creating PDF drawing record:', pdfDrawingError)
+            } else {
+              console.log(`PDF drawing record created: ${pdfDrawing.id}`)
+            }
+
             setUploadProgress({
               current: i + 1,
               total: files.length,
