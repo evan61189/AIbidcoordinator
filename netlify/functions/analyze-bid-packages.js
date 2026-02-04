@@ -118,17 +118,25 @@ Return JSON only: {"packages":[{"name":"Name","bidItemIds":["id1","id2"]}]}`
     )
 
     const text = response.content[0]?.text || ''
+    console.log('AI response length:', text.length)
+    console.log('AI response preview:', text.substring(0, 500))
+
     const match = text.match(/\{[\s\S]*\}/)
 
     if (!match) {
-      return { statusCode: 500, headers, body: JSON.stringify({ error: 'Invalid AI response - no JSON found', raw: text.substring(0, 300) }) }
+      console.log('No JSON match found in response')
+      return { statusCode: 500, headers, body: JSON.stringify({ error: 'Invalid AI response - no JSON found', raw: text.substring(0, 500) }) }
     }
+
+    console.log('Matched JSON length:', match[0].length)
 
     let analysis
     try {
       analysis = JSON.parse(match[0])
     } catch (parseError) {
-      return { statusCode: 500, headers, body: JSON.stringify({ error: 'Failed to parse AI JSON', raw: match[0].substring(0, 300) }) }
+      console.log('JSON parse error:', parseError.message)
+      console.log('Matched text preview:', match[0].substring(0, 500))
+      return { statusCode: 500, headers, body: JSON.stringify({ error: 'Failed to parse AI JSON', parseError: parseError.message, raw: match[0].substring(0, 500) }) }
     }
 
     console.log(`Successfully created ${analysis.packages?.length || 0} packages`)
