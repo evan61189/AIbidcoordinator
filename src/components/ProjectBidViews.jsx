@@ -59,36 +59,42 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
   async function loadData() {
     setLoading(true)
     try {
-      // Load scope packages
+      // Load scope packages (returns empty array if table doesn't exist)
       const packagesData = await fetchScopePackages(projectId)
       setScopePackages(packagesData || [])
 
       // Load submitted bids
-      const { data: bidsData, error: bidsError } = await supabase
-        .from('bids')
-        .select(`
-          *,
-          subcontractor:subcontractors (id, company_name),
-          bid_item:bid_items (
-            id, description, item_number,
-            trade:trades (id, name, division_code)
+      let projectBids = []
+      try {
+        const { data: bidsData, error: bidsError } = await supabase
+          .from('bids')
+          .select(`
+            *,
+            subcontractor:subcontractors (id, company_name),
+            bid_item:bid_items (
+              id, description, item_number,
+              trade:trades (id, name, division_code)
+            )
+          `)
+          .eq('status', 'submitted')
+
+        if (!bidsError) {
+          // Filter to this project
+          projectBids = (bidsData || []).filter(b =>
+            bidItems.some(item => item.id === b.bid_item?.id)
           )
-        `)
-        .eq('status', 'submitted')
+        }
+      } catch (e) {
+        console.warn('Could not load bids:', e.message)
+      }
 
-      if (bidsError) throw bidsError
-
-      // Filter to this project
-      const projectBids = (bidsData || []).filter(b =>
-        bidItems.some(item => item.id === b.bid_item?.id)
-      )
       setBids(projectBids)
 
       // Auto-select lowest bids for client view
       autoSelectLowestBids(projectBids)
     } catch (error) {
       console.error('Error loading data:', error)
-      toast.error('Failed to load data')
+      // Don't show error toast for missing tables - just show empty state
     } finally {
       setLoading(false)
     }

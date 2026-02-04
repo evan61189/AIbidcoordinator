@@ -402,7 +402,12 @@ export async function fetchScopePackages(projectId) {
     .eq('project_id', projectId)
     .order('created_at')
 
-  if (error) throw error
+  // Return empty array if table doesn't exist or other error
+  // This allows the app to work before migrations are run
+  if (error) {
+    console.warn('scope_packages query failed (table may not exist):', error.message)
+    return []
+  }
   return data
 }
 
