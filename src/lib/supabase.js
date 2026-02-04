@@ -380,3 +380,114 @@ export async function approveBidResponse(bidResponseId, bidId) {
 
   return response
 }
+
+// ============================================
+// SCOPE PACKAGES - For bid leveling comparison
+// ============================================
+
+export async function fetchScopePackages(projectId) {
+  const { data, error } = await supabase
+    .from('scope_packages')
+    .select(`
+      *,
+      items:scope_package_items (
+        bid_item:bid_items (
+          id,
+          description,
+          item_number,
+          trade:trades (id, name, division_code)
+        )
+      )
+    `)
+    .eq('project_id', projectId)
+    .order('created_at')
+
+  if (error) throw error
+  return data
+}
+
+export async function createScopePackage(projectId, name, description, bidItemIds = []) {
+  // Create the package
+  const { data: pkg, error: pkgError } = await supabase
+    .from('scope_packages')
+    .insert({ project_id: projectId, name, description })
+    .select()
+    .single()
+
+  if (pkgError) throw pkgError
+
+  // Add bid items to package
+  if (bidItemIds.length > 0) {
+    const links = bidItemIds.map(bidItemId => ({
+      scope_package_id: pkg.id,
+      bid_item_id: bidItemId
+    }))
+
+    await supabase.from('scope_package_items').insert(links)
+  }
+
+  return pkg
+}
+
+export async function updateScopePackage(id, updates, bidItemIds = null) {
+  const { data, error } = await supabase
+    .from('scope_packages')
+    .update(updates)
+    .eq('id', id)
+    .select()
+    .single()
+
+  if (error) throw error
+
+  // Update bid item associations if provided
+  if (bidItemIds !== null) {
+    await supabase.from('scope_package_items').delete().eq('scope_package_id', id)
+
+    if (bidItemIds.length > 0) {
+      const links = bidItemIds.map(bidItemId => ({
+        scope_package_id: id,
+        bid_item_id: bidItemId
+      }))
+      await supabase.from('scope_package_items').insert(links)
+    }
+  }
+
+  return data
+}
+
+export async function deleteScopePackage(id) {
+  const { error } = await supabase
+    .from('scope_packages')
+    .delete()
+    .eq('id', id)
+
+  if (error) throw error
+}
+
+export async function fetchBidsForLeveling(projectId) {
+  // Fetch all submitted bids for a project with their bid items and subcontractors
+  const { data, error } = await supabase
+    .from('bids')
+    .select(`
+      id,
+      amount,
+      notes,
+      status,
+      submitted_at,
+      subcontractor:subcontractors (id, company_name, contact_name, email),
+      bid_item:bid_items (
+        id,
+        description,
+        item_number,
+        trade:trades (id, name, division_code),
+        project_id
+      )
+    `)
+    .eq('bid_item.project_id', projectId)
+    .eq('status', 'submitted')
+    .order('submitted_at', { ascending: false })
+
+  if (error) throw error
+  // Filter out nulls from the join
+  return (data || []).filter(b => b.bid_item)
+}

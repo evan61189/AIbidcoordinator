@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { DollarSign, Search, Filter, Zap, RefreshCw, Mail, Trash2, CheckSquare, Square, Inbox, Check, X, Eye } from 'lucide-react'
+import { DollarSign, Search, Filter, Zap, RefreshCw, Mail, Trash2, CheckSquare, Square, Inbox, Check, X, Eye, Split, Layers } from 'lucide-react'
 import { fetchBids, fetchProjects, updateBid, deleteBids, fetchDrawingsForProject, fetchBidResponses, updateBidResponse } from '../lib/supabase'
 import { format } from 'date-fns'
 
@@ -40,6 +40,12 @@ export default function Bids() {
     }
   }
 
+  // Check if response has usable line items (with amounts)
+  function hasUsableLineItems(response) {
+    const lineItems = response.line_items || []
+    return lineItems.some(item => (item.total || item.unit_price) > 0)
+  }
+
   async function handleApproveResponse(response) {
     // Find ALL matching bids for this subcontractor/project
     const matchingBids = bids.filter(b =>
@@ -50,24 +56,36 @@ export default function Bids() {
 
     if (matchingBids.length === 0) {
       alert('Could not find any matching bids to update. The response will be marked as approved.')
+      await updateBidResponse(response.id, {
+        status: 'approved',
+        reviewed_at: new Date().toISOString()
+      })
+      loadData()
+      return
     }
+
+    const lineItems = response.line_items || []
+    const hasLineItemPricing = hasUsableLineItems(response)
 
     try {
       let updatedCount = 0
-      const lineItems = response.line_items || []
 
-      if (lineItems.length > 0 && matchingBids.length > 0) {
-        // Try to match line items to bids by trade name or description
+      if (hasLineItemPricing && matchingBids.length > 0) {
+        // LINE ITEM PRICING: Match each line item to its corresponding bid
+        const remainingBids = [...matchingBids]
+
         for (const lineItem of lineItems) {
           const lineItemTrade = lineItem.trade?.toLowerCase() || ''
           const lineItemDesc = lineItem.description?.toLowerCase() || ''
           const lineItemAmount = lineItem.total || lineItem.unit_price || 0
 
+          if (lineItemAmount <= 0) continue
+
           // Find best matching bid
           let bestMatch = null
           let bestScore = 0
 
-          for (const bid of matchingBids) {
+          for (const bid of remainingBids) {
             const bidTrade = bid.bid_item?.trade?.name?.toLowerCase() || ''
             const bidDesc = bid.bid_item?.description?.toLowerCase() || ''
 
@@ -95,7 +113,7 @@ export default function Bids() {
             }
           }
 
-          // Update the matched bid if we found one with any confidence
+          // Update the matched bid
           if (bestMatch && lineItemAmount > 0) {
             await updateBid(bestMatch.id, {
               amount: lineItemAmount,
@@ -103,21 +121,34 @@ export default function Bids() {
               submitted_at: new Date().toISOString()
             })
             updatedCount++
-            // Remove from matchingBids so we don't match it again
-            const idx = matchingBids.indexOf(bestMatch)
-            if (idx > -1) matchingBids.splice(idx, 1)
+            // Remove from remaining bids
+            const idx = remainingBids.indexOf(bestMatch)
+            if (idx > -1) remainingBids.splice(idx, 1)
           }
         }
-      }
-
-      // If no line items matched but we have a total, update the first bid
-      if (updatedCount === 0 && response.total_amount && matchingBids.length > 0) {
-        await updateBid(matchingBids[0].id, {
-          amount: response.total_amount,
-          status: 'submitted',
-          submitted_at: new Date().toISOString()
-        })
-        updatedCount = 1
+      } else if (response.total_amount && matchingBids.length > 0) {
+        // LUMP SUM PRICING: Apply full amount to first bid, mark others as included
+        for (let i = 0; i < matchingBids.length; i++) {
+          const bid = matchingBids[i]
+          if (i === 0) {
+            // First bid gets the full amount
+            await updateBid(bid.id, {
+              amount: response.total_amount,
+              status: 'submitted',
+              submitted_at: new Date().toISOString(),
+              notes: matchingBids.length > 1 ? `Lump sum for ${matchingBids.length} items` : null
+            })
+          } else {
+            // Other bids marked as included in lump sum
+            await updateBid(bid.id, {
+              amount: 0,
+              status: 'submitted',
+              submitted_at: new Date().toISOString(),
+              notes: `Included in lump sum`
+            })
+          }
+          updatedCount++
+        }
       }
 
       // Mark response as approved
@@ -126,7 +157,8 @@ export default function Bids() {
         reviewed_at: new Date().toISOString()
       })
 
-      alert(`Bid response approved! Updated ${updatedCount} bid(s) with amounts from line items.`)
+      const methodText = hasLineItemPricing ? 'line items' : 'lump sum'
+      alert(`Bid response approved! Updated ${updatedCount} bid(s) (${methodText}).`)
       loadData()
     } catch (error) {
       console.error('Error approving response:', error)
@@ -365,9 +397,15 @@ export default function Bids() {
                       <span className="font-bold text-2xl text-green-700">
                         ${response.total_amount?.toLocaleString() || '0'}
                       </span>
-                      {response.line_items?.length > 0 && (
-                        <span className="text-gray-500">
+                      {hasUsableLineItems(response) ? (
+                        <span className="badge bg-blue-100 text-blue-700 flex items-center gap-1">
+                          <Split className="h-3 w-3" />
                           {response.line_items.length} line item(s)
+                        </span>
+                      ) : (
+                        <span className="badge bg-purple-100 text-purple-700 flex items-center gap-1">
+                          <Layers className="h-3 w-3" />
+                          Lump Sum
                         </span>
                       )}
                       <span className={`badge ${response.ai_confidence_score >= 0.8 ? 'badge-success' : response.ai_confidence_score >= 0.5 ? 'badge-warning' : 'badge-danger'}`}>
@@ -636,6 +674,7 @@ export default function Bids() {
           </Link>
         </div>
       )}
+
     </div>
   )
 }
