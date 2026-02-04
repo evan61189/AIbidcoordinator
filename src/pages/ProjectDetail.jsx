@@ -552,15 +552,18 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
       }
 
       try {
-        // Load drawings
+        // Load original PDF drawings only (not converted page images)
+        // Filter for file_type = 'pdf' to only show attachable PDFs
         const { data } = await supabase
           .from('drawings')
-          .select('id, original_filename, drawing_number, title, discipline, file_size, storage_url, is_current')
+          .select('id, original_filename, drawing_number, title, discipline, file_size, storage_url, is_current, file_type')
           .eq('project_id', projectId)
           .eq('is_current', true)
-          .order('discipline')
+          .eq('file_type', 'pdf')
+          .order('uploaded_at', { ascending: false })
 
         setDrawings(data || [])
+        // Auto-select all PDF drawings by default
         setSelectedDrawings((data || []).map(d => d.id))
       } catch (error) {
         console.error('Error loading drawings:', error)
@@ -1061,6 +1064,122 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
                 </p>
               </div>
             </label>
+
+            {/* Drawing Attachments Section */}
+            {sendEmails && drawings.length > 0 && (
+              <div className="border rounded-lg p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-medium text-gray-900">Project Drawings</h3>
+                  <span className="text-sm text-gray-500">{drawings.length} available</span>
+                </div>
+
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={attachDrawings}
+                    onChange={(e) => setAttachDrawings(e.target.checked)}
+                    className="rounded border-gray-300"
+                  />
+                  <div>
+                    <span className="font-medium text-sm">Include drawings with invitation</span>
+                    <p className="text-xs text-gray-500">
+                      Attach PDF drawings to the email for subcontractors to review
+                    </p>
+                  </div>
+                </label>
+
+                {attachDrawings && (
+                  <>
+                    <div className="flex gap-4 ml-7">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="drawingMethod"
+                          checked={!useDrawingLinks}
+                          onChange={() => setUseDrawingLinks(false)}
+                          className="text-primary-600"
+                        />
+                        <span className="text-sm">Attach PDFs directly</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="drawingMethod"
+                          checked={useDrawingLinks}
+                          onChange={() => setUseDrawingLinks(true)}
+                          className="text-primary-600"
+                        />
+                        <span className="text-sm">Send download links</span>
+                      </label>
+                    </div>
+
+                    {!useDrawingLinks && (
+                      <p className="text-xs text-amber-600 ml-7">
+                        Note: If total file size exceeds 25MB, download links will be sent instead
+                      </p>
+                    )}
+
+                    <div className="ml-7 border rounded max-h-40 overflow-y-auto">
+                      <div className="p-2 bg-gray-50 border-b flex items-center justify-between sticky top-0">
+                        <span className="text-sm font-medium text-gray-700">Select drawings to include</span>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedDrawings(drawings.map(d => d.id))}
+                            className="text-xs text-primary-600 hover:underline"
+                          >
+                            Select all
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedDrawings([])}
+                            className="text-xs text-gray-500 hover:underline"
+                          >
+                            Clear
+                          </button>
+                        </div>
+                      </div>
+                      {drawings.map(drawing => (
+                        <label
+                          key={drawing.id}
+                          className="flex items-center gap-2 p-2 hover:bg-gray-50 cursor-pointer border-b last:border-b-0"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedDrawings.includes(drawing.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedDrawings([...selectedDrawings, drawing.id])
+                              } else {
+                                setSelectedDrawings(selectedDrawings.filter(id => id !== drawing.id))
+                              }
+                            }}
+                            className="rounded border-gray-300"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm truncate">
+                              {drawing.original_filename || `${drawing.drawing_number} - ${drawing.title}`}
+                            </div>
+                            <div className="text-xs text-gray-500 flex items-center gap-2">
+                              {drawing.discipline && <span className="bg-blue-100 text-blue-700 px-1.5 rounded">{drawing.discipline}</span>}
+                              {drawing.file_size && <span>{(drawing.file_size / 1024).toFixed(0)} KB</span>}
+                            </div>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+
+                    {selectedDrawings.length > 0 && (
+                      <p className="text-sm text-green-600 ml-7">
+                        {selectedDrawings.length} drawing(s) will be {useDrawingLinks ? 'linked' : 'attached'} ({
+                          (drawings.filter(d => selectedDrawings.includes(d.id)).reduce((sum, d) => sum + (d.file_size || 0), 0) / (1024 * 1024)).toFixed(1)
+                        } MB total)
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
           </div>
         )}
 

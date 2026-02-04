@@ -158,12 +158,14 @@ export async function handler(event) {
       try {
         let query = supabase
           .from('drawings')
-          .select('id, original_filename, storage_url, file_size, discipline, drawing_number, title')
+          .select('id, original_filename, storage_url, file_size, discipline, drawing_number, title, file_type')
 
         if (drawing_ids?.length > 0) {
+          // When specific drawing IDs provided, fetch those (should already be PDFs from UI)
           query = query.in('id', drawing_ids)
         } else if (bid_round_id) {
-          query = query.eq('bid_round_id', bid_round_id).eq('is_current', true)
+          // When fetching by round, only get original PDF files (not converted page images)
+          query = query.eq('bid_round_id', bid_round_id).eq('is_current', true).eq('file_type', 'pdf')
         }
 
         const { data: drawingData } = await query
