@@ -43,9 +43,15 @@ function getAnthropic() {
 async function consolidateTradeItems(anthropic, tradeName, items) {
   const itemDescriptions = items.map((item, i) => `${i + 1}. ${item.description}`).join('\n')
 
+  // Calculate target item count based on input count for more predictable results
+  const targetMin = Math.max(2, Math.ceil(items.length / 10))
+  const targetMax = Math.min(8, Math.ceil(items.length / 3))
+  const targetCount = Math.min(targetMax, Math.max(targetMin, 4))
+
   const response = await anthropic.messages.create({
     model: 'claude-sonnet-4-20250514',
     max_tokens: 4096,
+    temperature: 0, // Deterministic for consistent consolidation
     system: `You are a construction estimator creating clear, concise bid scope descriptions for subcontractors.
 
 Your job is to take a list of detailed extracted items and consolidate them into general scope line items that are:
@@ -55,7 +61,7 @@ Your job is to take a list of detailed extracted items and consolidate them into
 - Not overly specific (use phrases like "all types as indicated on drawings" instead of listing every type)`,
     messages: [{
       role: 'user',
-      content: `Consolidate these ${tradeName} bid items into 2-6 clear, general scope descriptions:
+      content: `Consolidate these ${items.length} ${tradeName} bid items into EXACTLY ${targetCount} clear, general scope descriptions:
 
 ${itemDescriptions}
 
@@ -67,12 +73,13 @@ Return JSON array of consolidated items:
   }
 ]
 
+IMPORTANT: Return EXACTLY ${targetCount} consolidated items.
+
 Guidelines:
 - Combine similar items into general statements
 - Use "as indicated on drawings" or "per specifications" instead of listing every detail
 - Keep descriptions to 1-2 sentences max
-- Include important notes about what's included
-- Aim for 2-6 consolidated items, not one for every original item`
+- Include important notes about what's included`
     }]
   })
 

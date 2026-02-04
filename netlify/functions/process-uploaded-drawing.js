@@ -132,6 +132,7 @@ IMPORTANT: Extract 5-20+ bid items from this drawing. Be specific and thorough.`
   const message = await anthropic.messages.create({
     model: CLAUDE_MODEL,
     max_tokens: 8192,
+    temperature: 0, // Deterministic for consistent extraction across runs
     system: 'You are an expert construction estimator. Analyze this construction drawing and extract comprehensive bid items by CSI MasterFormat. Return only valid JSON.',
     messages: [{ role: 'user', content }]
   })
