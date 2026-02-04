@@ -108,6 +108,9 @@ export default function BidRounds({ projectId, projectName }) {
   const [viewingDrawingsRoundId, setViewingDrawingsRoundId] = useState(null)
   const [roundDrawings, setRoundDrawings] = useState([])
   const [loadingDrawings, setLoadingDrawings] = useState(false)
+  const [viewingBidItemsRoundId, setViewingBidItemsRoundId] = useState(null)
+  const [roundBidItems, setRoundBidItems] = useState([])
+  const [loadingBidItems, setLoadingBidItems] = useState(false)
   const fileInputRef = useRef(null)
 
   useEffect(() => {
@@ -268,6 +271,83 @@ export default function BidRounds({ projectId, projectName }) {
     updateRoundName(roundId, editingRoundName)
   }
 
+  async function deleteRound(roundId, e) {
+    e.stopPropagation()
+    const round = rounds.find(r => r.id === roundId)
+    const itemCount = round?.bid_items?.[0]?.count || 0
+    const drawingCount = round?.drawings?.[0]?.count || 0
+
+    if (!confirm(`Are you sure you want to delete "${round?.name}"?\n\nThis will permanently delete:\n• ${drawingCount} drawing(s)\n• ${itemCount} bid item(s)\n• All responses for this round\n\nThis action cannot be undone.`)) {
+      return
+    }
+
+    try {
+      toast.loading('Deleting round...', { id: 'delete-round' })
+
+      // Get all drawings for this round to delete from storage
+      const { data: drawings } = await supabase
+        .from('drawings')
+        .select('id, storage_path')
+        .eq('bid_round_id', roundId)
+
+      // Delete bid items for this round
+      await supabase
+        .from('bid_items')
+        .delete()
+        .eq('bid_round_id', roundId)
+
+      // Delete drawings records
+      if (drawings?.length > 0) {
+        await supabase
+          .from('drawings')
+          .delete()
+          .eq('bid_round_id', roundId)
+
+        // Delete from storage
+        const storagePaths = drawings.map(d => d.storage_path).filter(Boolean)
+        if (storagePaths.length > 0) {
+          await supabase.storage
+            .from('drawings')
+            .remove(storagePaths)
+        }
+      }
+
+      // Delete bid round responses
+      await supabase
+        .from('bid_round_responses')
+        .delete()
+        .eq('bid_round_id', roundId)
+
+      // Delete bid round invitations
+      await supabase
+        .from('bid_round_invitations')
+        .delete()
+        .eq('bid_round_id', roundId)
+
+      // Finally delete the round itself
+      const { error } = await supabase
+        .from('bid_rounds')
+        .delete()
+        .eq('id', roundId)
+
+      if (error) throw error
+
+      toast.dismiss('delete-round')
+      toast.success(`Deleted ${round?.name}`)
+
+      // Clear expanded state if we deleted the expanded round
+      if (expandedRound === roundId) {
+        setExpandedRound(null)
+      }
+
+      loadRounds()
+    } catch (error) {
+      toast.dismiss('delete-round')
+      console.error('Error deleting round:', error)
+      toast.error('Failed to delete round')
+    }
+  }
+
   async function loadDrawingsForRound(roundId) {
     setLoadingDrawings(true)
     try {
@@ -370,6 +450,79 @@ export default function BidRounds({ projectId, projectName }) {
       toast.dismiss('delete-all')
       console.error('Error deleting drawings:', error)
       toast.error('Failed to delete drawings')
+    }
+  }
+
+  async function loadBidItemsForRound(roundId) {
+    setLoadingBidItems(true)
+    try {
+      const { data, error } = await supabase
+        .from('bid_items')
+        .select('*, trades(id, name, division_code)')
+        .eq('bid_round_id', roundId)
+        .order('item_number', { ascending: true })
+
+      if (error) throw error
+      setRoundBidItems(data || [])
+    } catch (error) {
+      console.error('Error loading bid items:', error)
+      toast.error('Failed to load bid items')
+    } finally {
+      setLoadingBidItems(false)
+    }
+  }
+
+  function openViewBidItems(roundId) {
+    setViewingBidItemsRoundId(roundId)
+    loadBidItemsForRound(roundId)
+  }
+
+  async function deleteBidItem(itemId) {
+    if (!confirm('Are you sure you want to delete this bid item?')) {
+      return
+    }
+
+    try {
+      const { error } = await supabase
+        .from('bid_items')
+        .delete()
+        .eq('id', itemId)
+
+      if (error) throw error
+
+      toast.success('Bid item deleted')
+      loadBidItemsForRound(viewingBidItemsRoundId)
+      loadRounds() // Refresh counts
+    } catch (error) {
+      console.error('Error deleting bid item:', error)
+      toast.error('Failed to delete bid item')
+    }
+  }
+
+  async function deleteAllBidItems(roundId) {
+    const count = roundBidItems.length
+    if (!confirm(`Are you sure you want to delete all ${count} bid items from this round?\n\nThis action cannot be undone.`)) {
+      return
+    }
+
+    try {
+      toast.loading(`Deleting ${count} bid items...`, { id: 'delete-all-items' })
+
+      const { error } = await supabase
+        .from('bid_items')
+        .delete()
+        .eq('bid_round_id', roundId)
+
+      if (error) throw error
+
+      toast.dismiss('delete-all-items')
+      toast.success(`Deleted ${count} bid items`)
+      setViewingBidItemsRoundId(null)
+      loadRounds()
+    } catch (error) {
+      toast.dismiss('delete-all-items')
+      console.error('Error deleting bid items:', error)
+      toast.error('Failed to delete bid items')
     }
   }
 
@@ -857,6 +1010,13 @@ export default function BidRounds({ projectId, projectName }) {
                             >
                               <Edit className="w-3.5 h-3.5" />
                             </button>
+                            <button
+                              onClick={(e) => deleteRound(round.id, e)}
+                              className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                              title="Delete round"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
                           </>
                         )}
                         <span className={`px-2 py-0.5 rounded-full text-xs ${statusColors[round.status]}`}>
@@ -916,6 +1076,13 @@ export default function BidRounds({ projectId, projectName }) {
                       >
                         <Eye className="w-4 h-4" />
                         View Drawings ({round.drawings?.[0]?.count || 0})
+                      </button>
+                      <button
+                        onClick={() => openViewBidItems(round.id)}
+                        className="flex items-center gap-1 px-3 py-1.5 text-sm bg-white border rounded hover:bg-gray-50"
+                      >
+                        <FileText className="w-4 h-4" />
+                        View Bid Items ({round.bid_items?.[0]?.count || 0})
                       </button>
                     </div>
 
@@ -1093,6 +1260,111 @@ export default function BidRounds({ projectId, projectName }) {
             <div className="px-6 py-4 border-t bg-gray-50">
               <button
                 onClick={() => setViewingDrawingsRoundId(null)}
+                className="w-full px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* View Bid Items Modal */}
+      {viewingBidItemsRoundId && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[80vh] flex flex-col">
+            <div className="px-6 py-4 border-b flex items-center justify-between">
+              <h2 className="text-lg font-semibold">
+                Bid Items for {rounds.find(r => r.id === viewingBidItemsRoundId)?.name}
+                <span className="text-sm font-normal text-gray-500 ml-2">
+                  ({roundBidItems.length} items)
+                </span>
+              </h2>
+              <div className="flex items-center gap-2">
+                {roundBidItems.length > 0 && (
+                  <button
+                    onClick={() => deleteAllBidItems(viewingBidItemsRoundId)}
+                    className="px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 rounded flex items-center gap-1"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Delete All
+                  </button>
+                )}
+                <button
+                  onClick={() => setViewingBidItemsRoundId(null)}
+                  className="p-1 hover:bg-gray-100 rounded"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+            <div className="p-6 overflow-y-auto flex-1">
+              {loadingBidItems ? (
+                <div className="flex items-center justify-center gap-2 text-gray-500 py-8">
+                  <RefreshCw className="w-5 h-5 animate-spin" />
+                  Loading bid items...
+                </div>
+              ) : roundBidItems.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <FileText className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                  <p>No bid items in this round</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {/* Group by trade */}
+                  {Object.entries(
+                    roundBidItems.reduce((acc, item) => {
+                      const tradeName = item.trades?.name || 'Unassigned'
+                      if (!acc[tradeName]) acc[tradeName] = []
+                      acc[tradeName].push(item)
+                      return acc
+                    }, {})
+                  ).map(([tradeName, items]) => (
+                    <div key={tradeName} className="border rounded-lg overflow-hidden">
+                      <div className="bg-gray-100 px-4 py-2 font-medium text-gray-700 flex items-center justify-between">
+                        <span>{tradeName}</span>
+                        <span className="text-sm text-gray-500">{items.length} item(s)</span>
+                      </div>
+                      <div className="divide-y">
+                        {items.map((item) => (
+                          <div
+                            key={item.id}
+                            className="px-4 py-3 flex items-start justify-between hover:bg-gray-50 group"
+                          >
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs text-gray-400 font-mono">
+                                  {item.item_number || '-'}
+                                </span>
+                                <span className="text-sm text-gray-900">
+                                  {item.description}
+                                </span>
+                              </div>
+                              {(item.quantity || item.notes) && (
+                                <div className="text-xs text-gray-500 mt-1 flex gap-3">
+                                  {item.quantity && <span>Qty: {item.quantity} {item.unit || ''}</span>}
+                                  {item.notes && <span className="truncate max-w-md">{item.notes}</span>}
+                                </div>
+                              )}
+                            </div>
+                            <button
+                              onClick={() => deleteBidItem(item.id)}
+                              className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                              title="Delete bid item"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="px-6 py-4 border-t bg-gray-50">
+              <button
+                onClick={() => setViewingBidItemsRoundId(null)}
                 className="w-full px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
               >
                 Close
