@@ -1,9 +1,4 @@
-let Anthropic
-try {
-  Anthropic = require('@anthropic-ai/sdk').default
-} catch (e) {
-  console.error('Failed to load Anthropic SDK:', e)
-}
+import Anthropic from '@anthropic-ai/sdk'
 
 // Netlify function configuration
 export const config = {
@@ -96,7 +91,7 @@ async function callWithRetry(fn, maxRetries = 2) {
   throw lastError
 }
 
-exports.handler = async (event) => {
+export async function handler(event) {
   const headers = {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*'
@@ -123,10 +118,6 @@ exports.handler = async (event) => {
 
     if (!bidItems?.length) {
       return { statusCode: 400, headers, body: JSON.stringify({ error: 'No bid items provided' }) }
-    }
-
-    if (!Anthropic) {
-      return { statusCode: 500, headers, body: JSON.stringify({ error: 'Anthropic SDK failed to load' }) }
     }
 
     if (!process.env.ANTHROPIC_API_KEY) {
