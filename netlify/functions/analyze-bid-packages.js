@@ -39,6 +39,24 @@ GROUP BID ITEMS BY THESE SUBCONTRACTOR PACKAGES:
 CRITICAL: Electrical, Low Voltage, Fire Alarm, and Fire Protection must be 4 SEPARATE packages.
 `
 
+// Helper to retry API calls
+async function callWithRetry(fn, maxRetries = 2) {
+  let lastError
+  for (let i = 0; i <= maxRetries; i++) {
+    try {
+      return await fn()
+    } catch (error) {
+      lastError = error
+      console.log(`Attempt ${i + 1} failed: ${error.message}`)
+      if (i < maxRetries && error.status === 500) {
+        // Wait before retry (1s, 2s)
+        await new Promise(r => setTimeout(r, (i + 1) * 1000))
+      }
+    }
+  }
+  throw lastError
+}
+
 exports.handler = async (event) => {
   const headers = {
     'Content-Type': 'application/json',
@@ -54,7 +72,15 @@ exports.handler = async (event) => {
       return { statusCode: 405, headers, body: JSON.stringify({ error: 'Method not allowed' }) }
     }
 
-    const { bidItems } = JSON.parse(event.body || '{}')
+    // Parse request body with better error handling
+    let bidItems
+    try {
+      const body = event.body ? JSON.parse(event.body) : {}
+      bidItems = body.bidItems
+    } catch (parseErr) {
+      console.error('Request body parse error:', parseErr.message, 'Body:', event.body?.substring(0, 100))
+      return { statusCode: 400, headers, body: JSON.stringify({ error: 'Invalid request body' }) }
+    }
 
     if (!bidItems?.length) {
       return { statusCode: 400, headers, body: JSON.stringify({ error: 'No bid items provided' }) }
@@ -68,6 +94,8 @@ exports.handler = async (event) => {
       return { statusCode: 500, headers, body: JSON.stringify({ error: 'API key not configured' }) }
     }
 
+    console.log(`Analyzing ${bidItems.length} bid items...`)
+
     // Build concise item list (just ID and description)
     const items = bidItems.map(i => `${i.id}|${i.description}`).join('\n')
 
@@ -80,11 +108,14 @@ Return JSON only: {"packages":[{"name":"Name","bidItemIds":["id1","id2"]}]}`
 
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 2000,
-      messages: [{ role: 'user', content: prompt }]
-    })
+    // Call API with retry logic
+    const response = await callWithRetry(() =>
+      anthropic.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 2000,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    )
 
     const text = response.content[0]?.text || ''
     const match = text.match(/\{[\s\S]*\}/)
@@ -100,6 +131,7 @@ Return JSON only: {"packages":[{"name":"Name","bidItemIds":["id1","id2"]}]}`
       return { statusCode: 500, headers, body: JSON.stringify({ error: 'Failed to parse AI JSON', raw: match[0].substring(0, 300) }) }
     }
 
+    console.log(`Successfully created ${analysis.packages?.length || 0} packages`)
     return { statusCode: 200, headers, body: JSON.stringify({ success: true, analysis }) }
 
   } catch (error) {
@@ -107,7 +139,11 @@ Return JSON only: {"packages":[{"name":"Name","bidItemIds":["id1","id2"]}]}`
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({ error: error.message || 'Unknown error' })
+      body: JSON.stringify({
+        error: error.message || 'Unknown error',
+        isApiError: error.status === 500,
+        hint: error.status === 500 ? 'Anthropic API is experiencing issues. Please try again in a few minutes.' : undefined
+      })
     }
   }
 }
