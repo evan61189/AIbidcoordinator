@@ -44,9 +44,10 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
 
   // Client view state
   const [selectedBids, setSelectedBids] = useState({}) // bidItemId -> bid
-  const [markupPercent, setMarkupPercent] = useState(0) // Hidden markup (not shown on exports)
-  const [generalConditions, setGeneralConditions] = useState(0)
-  const [overheadProfit, setOverheadProfit] = useState(0)
+  const [manualAmounts, setManualAmounts] = useState({}) // bidItemId -> manual amount (for items without bids)
+  const [markupPercent, setMarkupPercent] = useState(0) // Hidden markup (applied to each line item, not shown separately)
+  const [generalConditions, setGeneralConditions] = useState(0) // Goes under Division 01 - General Requirements
+  const [overheadProfit, setOverheadProfit] = useState(0) // Separate line item at bottom
   const [contingency, setContingency] = useState(0)
   const [customLineItems, setCustomLineItems] = useState([])
 
@@ -245,21 +246,44 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
   }
 
   // ==================== DIVISION VIEW HELPERS ====================
-  function groupByDivision() {
+  function groupByDivision(includeMarkup = false) {
     const groups = {}
     for (const item of bidItems) {
-      const divCode = item.trade?.division_code || '00'
-      const divName = item.trade?.name || 'General'
+      const divCode = item.trade?.division_code || '01'
+      const divName = item.trade?.name || 'General Requirements'
 
       if (!groups[divCode]) {
         groups[divCode] = { code: divCode, name: divName, items: [], total: 0 }
       }
 
       const selectedBid = selectedBids[item.id]
-      const amount = selectedBid?.amount || 0
-      groups[divCode].items.push({ ...item, selectedBid, amount, allBids: bids.filter(b => b.bid_item?.id === item.id) })
+      const baseAmount = getItemBaseAmount(item.id)
+      // For client view, apply markup to each item
+      const amount = includeMarkup ? getItemWithMarkup(item.id) : baseAmount
+      const manualAmount = manualAmounts[item.id]
+      groups[divCode].items.push({
+        ...item,
+        selectedBid,
+        baseAmount,
+        amount,
+        manualAmount,
+        allBids: bids.filter(b => b.bid_item?.id === item.id)
+      })
       groups[divCode].total += amount
     }
+
+    // Ensure Division 01 exists for General Conditions
+    if (!groups['01']) {
+      groups['01'] = { code: '01', name: 'General Requirements', items: [], total: 0 }
+    }
+
+    // Add General Conditions to Division 01 total (for client view)
+    if (includeMarkup && generalConditions > 0) {
+      groups['01'].total += generalConditions
+      groups['01'].hasGeneralConditions = true
+      groups['01'].generalConditionsAmount = generalConditions
+    }
+
     return Object.values(groups).sort((a, b) => a.code.localeCompare(b.code))
   }
 
@@ -268,19 +292,47 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
   }
 
   // ==================== CLIENT VIEW HELPERS ====================
-  function getSubtotal() {
-    return Object.values(selectedBids).reduce((sum, bid) => sum + (bid?.amount || 0), 0)
+  // Get the base amount for an item (bid or manual)
+  function getItemBaseAmount(itemId) {
+    const bid = selectedBids[itemId]
+    if (bid?.amount > 0) return bid.amount
+    return manualAmounts[itemId] || 0
   }
 
+  // Get item amount WITH hidden markup applied
+  function getItemWithMarkup(itemId) {
+    const base = getItemBaseAmount(itemId)
+    return base * (1 + markupPercent / 100)
+  }
+
+  // Subtotal of all bid items (with markup already applied to each)
+  function getSubtotal() {
+    let total = 0
+    for (const item of bidItems) {
+      total += getItemWithMarkup(item.id)
+    }
+    return total
+  }
+
+  // The markup is hidden - applied to each line item, not shown separately
   function getMarkupAmount() {
-    return getSubtotal() * (markupPercent / 100)
+    let baseTotal = 0
+    for (const item of bidItems) {
+      baseTotal += getItemBaseAmount(item.id)
+    }
+    return baseTotal * (markupPercent / 100)
   }
 
   function getGrandTotal() {
-    const subtotal = getSubtotal()
-    const markup = getMarkupAmount()
+    const subtotal = getSubtotal() // Already includes markup on each item
     const customTotal = customLineItems.reduce((sum, item) => sum + (item.amount || 0), 0)
-    return subtotal + markup + generalConditions + overheadProfit + contingency + customTotal
+    // GC is now included in General Requirements division, so we add it there
+    // OH&P and Contingency remain as separate line items
+    return subtotal + generalConditions + overheadProfit + contingency + customTotal
+  }
+
+  function updateManualAmount(itemId, amount) {
+    setManualAmounts(prev => ({ ...prev, [itemId]: Number(amount) || 0 }))
   }
 
   function addCustomLineItem() {
@@ -302,25 +354,28 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
   }
 
   function exportToCSV() {
-    const divisions = groupByDivision()
+    const divisions = groupByDivision(true) // Include markup in amounts
     const rows = [
-      ['Division', 'Item', 'Subcontractor', 'Amount'],
-      ...divisions.flatMap(div =>
-        div.items.map(item => [
+      ['Division', 'Item', 'Amount'],
+      ...divisions.flatMap(div => {
+        const divRows = div.items.map(item => [
           `${div.code} - ${div.name}`,
           item.description,
-          item.selectedBid?.subcontractor?.company_name || 'TBD',
           item.amount || 0
         ])
-      ),
+        // Add General Conditions under Division 01
+        if (div.code === '01' && generalConditions > 0) {
+          divRows.push([`${div.code} - ${div.name}`, 'General Conditions', generalConditions])
+        }
+        return divRows
+      }),
       [],
-      ['', '', 'Subtotal', getSubtotal()],
-      // Note: Markup is hidden in exports - included in totals but not shown as line item
-      ['', '', 'General Conditions', generalConditions],
-      ['', '', 'OH&P', overheadProfit],
-      ['', '', 'Contingency', contingency],
-      ...customLineItems.map(item => ['', '', item.description, item.amount]),
-      ['', '', 'GRAND TOTAL', getGrandTotal()]
+      ['', 'Subtotal', getSubtotal()],
+      // Markup is hidden - already included in line item amounts
+      ...(overheadProfit > 0 ? [['', 'Overhead & Profit', overheadProfit]] : []),
+      ...(contingency > 0 ? [['', 'Contingency', contingency]] : []),
+      ...customLineItems.filter(item => item.amount > 0).map(item => ['', item.description || 'Additional', item.amount]),
+      ['', 'GRAND TOTAL', getGrandTotal()]
     ]
 
     const csv = rows.map(row => row.map(cell => `"${cell}"`).join(',')).join('\n')
@@ -524,48 +579,58 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
                     </div>
 
                     {expandedPackages[pkg.id] && (
-                      <div className="p-4 border-t space-y-4">
-                        {/* Package Items */}
-                        <div className="flex flex-wrap gap-2">
-                          {pkg.items?.map(({ bid_item }) => (
-                            <span key={bid_item?.id} className="px-2 py-1 bg-gray-100 rounded text-sm">
-                              {bid_item?.trade?.division_code} - {bid_item?.description?.substring(0, 30)}...
-                            </span>
-                          ))}
-                        </div>
-
-                        {/* Bidders */}
-                        {analysis.coverage.length > 0 ? (
-                          <table className="w-full text-sm">
-                            <thead>
-                              <tr className="border-b bg-gray-50">
-                                <th className="text-left p-2">Subcontractor</th>
-                                <th className="text-right p-2">Total</th>
-                                <th className="text-center p-2">Coverage</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {analysis.coverage.map(sub => (
-                                <tr key={sub.subcontractor.id} className="border-b">
-                                  <td className="p-2 font-medium">{sub.subcontractor.company_name}</td>
-                                  <td className={`p-2 text-right font-semibold ${sub.isComplete && sub.total === lowestComplete?.total ? 'text-green-600' : ''}`}>
-                                    {formatCurrency(sub.total)}
-                                  </td>
-                                  <td className="p-2 text-center">
-                                    {sub.isComplete ? (
-                                      <span className="text-green-600"><Check className="w-4 h-4 inline" /> Complete</span>
-                                    ) : (
-                                      <span className="text-yellow-600">{Math.round(sub.coveragePercent)}%</span>
-                                    )}
+                      <div className="border-t">
+                        {/* Package Items - Table Format */}
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="bg-gray-50 text-gray-600 text-xs">
+                              <th className="text-left px-3 py-2 w-16">Div</th>
+                              <th className="text-left px-3 py-2">Description</th>
+                              <th className="text-left px-3 py-2 w-32">Low Bid</th>
+                              <th className="text-right px-3 py-2 w-28">Amount</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y">
+                            {pkg.items?.map(({ bid_item }) => {
+                              if (!bid_item) return null
+                              const itemBids = bids.filter(b => b.bid_item?.id === bid_item.id)
+                              const lowestBid = itemBids.filter(b => b.amount > 0).sort((a, b) => a.amount - b.amount)[0]
+                              const amount = lowestBid?.amount || manualAmounts[bid_item.id] || 0
+                              return (
+                                <tr key={bid_item.id} className="hover:bg-gray-50">
+                                  <td className="px-3 py-2 text-gray-500">{bid_item.trade?.division_code || '-'}</td>
+                                  <td className="px-3 py-2 text-gray-900">{bid_item.description}</td>
+                                  <td className="px-3 py-2 text-gray-600">{lowestBid?.subcontractor?.company_name || '-'}</td>
+                                  <td className="px-3 py-2 text-right font-medium">
+                                    {amount > 0 ? formatCurrency(amount) : '-'}
                                   </td>
                                 </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+
+                        {/* Bidders Summary */}
+                        {analysis.coverage.length > 0 && (
+                          <div className="p-4 border-t bg-gray-50">
+                            <h4 className="text-sm font-medium text-gray-700 mb-2">Bidders</h4>
+                            <div className="flex flex-wrap gap-2">
+                              {analysis.coverage.map(sub => (
+                                <span
+                                  key={sub.subcontractor.id}
+                                  className={`px-2 py-1 rounded text-sm ${
+                                    sub.isComplete
+                                      ? sub.total === lowestComplete?.total
+                                        ? 'bg-green-100 text-green-700'
+                                        : 'bg-blue-100 text-blue-700'
+                                      : 'bg-yellow-100 text-yellow-700'
+                                  }`}
+                                >
+                                  {sub.subcontractor.company_name}: {formatCurrency(sub.total)}
+                                  {sub.isComplete ? ' ✓' : ` (${Math.round(sub.coveragePercent)}%)`}
+                                </span>
                               ))}
-                            </tbody>
-                          </table>
-                        ) : (
-                          <div className="text-center py-4 text-gray-500">
-                            <Users className="w-8 h-8 mx-auto mb-2 text-gray-300" />
-                            No bids received yet
+                            </div>
                           </div>
                         )}
                       </div>
@@ -582,11 +647,11 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
       {activeView === 'division' && (
         <div className="p-6">
           <p className="text-sm text-gray-600 mb-4">
-            View bid items organized by CSI MasterFormat divisions.
+            View bid items organized by CSI MasterFormat divisions. Enter manual amounts for items without bids.
           </p>
 
           <div className="space-y-3">
-            {groupByDivision().map(division => (
+            {groupByDivision(false).map(division => (
               <div key={division.code} className="border rounded-lg">
                 <button
                   onClick={() => toggleDivision(division.code)}
@@ -607,20 +672,40 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
                       <thead>
                         <tr className="bg-gray-50 text-gray-600">
                           <th className="text-left p-3">Item</th>
-                          <th className="text-left p-3">Low Bid</th>
-                          <th className="text-right p-3">Amount</th>
+                          <th className="text-left p-3 w-40">Low Bid / Source</th>
+                          <th className="text-right p-3 w-36">Amount</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {division.items.map(item => (
-                          <tr key={item.id} className="border-t">
-                            <td className="p-3">{item.description}</td>
-                            <td className="p-3 text-gray-600">{item.selectedBid?.subcontractor?.company_name || 'No bids'}</td>
-                            <td className="p-3 text-right font-medium">
-                              {item.amount > 0 ? formatCurrency(item.amount) : '-'}
-                            </td>
-                          </tr>
-                        ))}
+                        {division.items.map(item => {
+                          const hasBid = item.selectedBid?.amount > 0
+                          return (
+                            <tr key={item.id} className="border-t">
+                              <td className="p-3">{item.description}</td>
+                              <td className="p-3 text-gray-600">
+                                {hasBid ? item.selectedBid.subcontractor?.company_name : (
+                                  <span className="text-orange-600 text-xs">Manual Entry</span>
+                                )}
+                              </td>
+                              <td className="p-3 text-right">
+                                {hasBid ? (
+                                  <span className="font-medium">{formatCurrency(item.amount)}</span>
+                                ) : (
+                                  <div className="flex items-center justify-end gap-1">
+                                    <span className="text-gray-400">$</span>
+                                    <input
+                                      type="number"
+                                      value={manualAmounts[item.id] || ''}
+                                      onChange={(e) => updateManualAmount(item.id, e.target.value)}
+                                      placeholder="0"
+                                      className="w-24 text-right border rounded px-2 py-1 text-sm"
+                                    />
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          )
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -635,23 +720,25 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
       {activeView === 'client' && (
         <div className="p-6 print:p-0">
           {/* Markup Controls (print-hidden) */}
-          <div className="mb-6 p-4 bg-gray-50 rounded-lg print:hidden">
-            <h3 className="font-medium text-gray-900 mb-3">Pricing Adjustments</h3>
+          <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg print:hidden">
+            <h3 className="font-medium text-gray-900 mb-1">Pricing Adjustments</h3>
+            <p className="text-xs text-gray-500 mb-3">Markup is applied to each line item (hidden in exports). GC goes under Div 01. OH&P shown separately.</p>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div>
-                <label className="block text-sm text-gray-600 mb-1">Markup %</label>
+                <label className="block text-sm text-gray-600 mb-1">Hidden Markup %</label>
                 <div className="flex items-center gap-2">
                   <input
                     type="number"
                     value={markupPercent}
                     onChange={(e) => setMarkupPercent(Number(e.target.value) || 0)}
                     className="input w-20"
+                    placeholder="0"
                   />
                   <Percent className="w-4 h-4 text-gray-400" />
                 </div>
               </div>
               <div>
-                <label className="block text-sm text-gray-600 mb-1">General Conditions</label>
+                <label className="block text-sm text-gray-600 mb-1">General Conditions (Div 01)</label>
                 <div className="flex items-center gap-2">
                   <DollarSign className="w-4 h-4 text-gray-400" />
                   <input
@@ -659,11 +746,12 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
                     value={generalConditions}
                     onChange={(e) => setGeneralConditions(Number(e.target.value) || 0)}
                     className="input"
+                    placeholder="0"
                   />
                 </div>
               </div>
               <div>
-                <label className="block text-sm text-gray-600 mb-1">OH&P</label>
+                <label className="block text-sm text-gray-600 mb-1">OH&P (separate line)</label>
                 <div className="flex items-center gap-2">
                   <DollarSign className="w-4 h-4 text-gray-400" />
                   <input
@@ -671,6 +759,7 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
                     value={overheadProfit}
                     onChange={(e) => setOverheadProfit(Number(e.target.value) || 0)}
                     className="input"
+                    placeholder="0"
                   />
                 </div>
               </div>
@@ -683,10 +772,16 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
                     value={contingency}
                     onChange={(e) => setContingency(Number(e.target.value) || 0)}
                     className="input"
+                    placeholder="0"
                   />
                 </div>
               </div>
             </div>
+            {markupPercent > 0 && (
+              <div className="mt-3 text-sm text-yellow-700 bg-yellow-100 px-3 py-1.5 rounded">
+                <strong>Hidden profit:</strong> {formatCurrency(getMarkupAmount())} ({markupPercent}% markup applied to all line items)
+              </div>
+            )}
           </div>
 
           {/* Client Proposal */}
@@ -705,28 +800,45 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
               </div>
             </div>
 
-            {/* Division Breakdown */}
+            {/* Division Breakdown with Scope Items */}
             <div className="p-6">
-              <h3 className="font-bold text-gray-900 mb-4">Cost Breakdown by Division</h3>
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b text-gray-600 text-sm">
-                    <th className="text-left py-2">Division</th>
-                    <th className="text-right py-2">Amount</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {groupByDivision().map(division => (
-                    <tr key={division.code} className="border-b">
-                      <td className="py-3">
-                        <span className="text-gray-500">{division.code}</span>
-                        <span className="ml-2 font-medium">{division.name}</span>
-                      </td>
-                      <td className="py-3 text-right font-medium">{formatCurrency(division.total)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <h3 className="font-bold text-gray-900 mb-4">Scope of Work & Pricing</h3>
+
+              {groupByDivision(true).map(division => (
+                <div key={division.code} className="mb-6">
+                  {/* Division Header */}
+                  <div className="flex justify-between items-center border-b-2 border-indigo-200 pb-2 mb-2">
+                    <div>
+                      <span className="text-indigo-600 font-medium">Division {division.code}</span>
+                      <span className="ml-2 font-bold text-gray-900">{division.name}</span>
+                    </div>
+                    <span className="font-bold text-gray-900">{formatCurrency(division.total)}</span>
+                  </div>
+
+                  {/* Scope Items */}
+                  <table className="w-full text-sm mb-2">
+                    <tbody>
+                      {division.items.map(item => (
+                        <tr key={item.id} className="border-b border-gray-100">
+                          <td className="py-2 pl-4 text-gray-700">• {item.description}</td>
+                          <td className="py-2 text-right text-gray-600 w-28">
+                            {item.amount > 0 ? formatCurrency(item.amount) : '-'}
+                          </td>
+                        </tr>
+                      ))}
+                      {/* Show General Conditions under Division 01 */}
+                      {division.code === '01' && generalConditions > 0 && (
+                        <tr className="border-b border-gray-100 bg-gray-50">
+                          <td className="py-2 pl-4 text-gray-700 font-medium">• General Conditions</td>
+                          <td className="py-2 text-right text-gray-600 w-28 font-medium">
+                            {formatCurrency(generalConditions)}
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              ))}
             </div>
 
             {/* Custom Line Items */}
@@ -762,26 +874,13 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
               </button>
             </div>
 
-            {/* Totals */}
+            {/* Totals - Simplified since markup is hidden */}
             <div className="p-6 bg-gray-50 border-t">
               <div className="space-y-2">
                 <div className="flex justify-between">
-                  <span className="text-gray-600">Subtotal</span>
+                  <span className="text-gray-600">Subtotal (all divisions)</span>
                   <span className="font-medium">{formatCurrency(getSubtotal())}</span>
                 </div>
-                {/* Markup is hidden in print/export - shown only in edit mode */}
-                {markupPercent > 0 && (
-                  <div className="flex justify-between print:hidden">
-                    <span className="text-gray-600">Markup ({markupPercent}%)</span>
-                    <span className="font-medium">{formatCurrency(getMarkupAmount())}</span>
-                  </div>
-                )}
-                {generalConditions > 0 && (
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">General Conditions</span>
-                    <span className="font-medium">{formatCurrency(generalConditions)}</span>
-                  </div>
-                )}
                 {overheadProfit > 0 && (
                   <div className="flex justify-between">
                     <span className="text-gray-600">Overhead & Profit</span>
@@ -794,9 +893,9 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
                     <span className="font-medium">{formatCurrency(contingency)}</span>
                   </div>
                 )}
-                {customLineItems.map(item => item.amount > 0 && (
+                {customLineItems.filter(item => item.amount > 0).map(item => (
                   <div key={item.id} className="flex justify-between">
-                    <span className="text-gray-600">{item.description || 'Custom Item'}</span>
+                    <span className="text-gray-600">{item.description || 'Additional'}</span>
                     <span className="font-medium">{formatCurrency(item.amount)}</span>
                   </div>
                 ))}
