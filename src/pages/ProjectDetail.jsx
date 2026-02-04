@@ -667,40 +667,33 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
     }
 
     setLoading(true)
-    let successCount = 0
+    let invitationCount = 0
     let emailsSent = 0
 
     try {
-      // Get selected items and subs data
-      const selectedItemsData = selectedItems.map(id => bidItems.find(item => item.id === id))
+      // Get selected subs data
       const selectedSubsData = selectedSubs.map(id => subcontractors.find(sub => sub.id === id))
 
-      // Create bid invitations
-      for (const itemId of selectedItems) {
-        for (const subId of selectedSubs) {
-          try {
-            await createBid({
-              bid_item_id: itemId,
-              subcontractor_id: subId,
-              status: 'invited',
-              invitation_sent_at: new Date().toISOString()
-            })
-            successCount++
-          } catch (err) {
-            console.error('Error creating bid:', err)
-          }
+      // Get package data for selected packages
+      const selectedPackageData = selectedPackages.map(pkgId => {
+        const pkg = scopePackages.find(p => p.id === pkgId)
+        const items = getPackageItems(pkgId)
+        return { ...pkg, items }
+      }).filter(pkg => pkg.items.length > 0)
+
+      // Send one invitation per subcontractor (covering all selected packages)
+      for (const sub of selectedSubsData) {
+        if (!sub?.email && sendEmails) {
+          console.log(`Skipping ${sub?.company_name} - no email`)
+          continue
         }
-      }
 
-      // Send emails if enabled - one email per sub with ALL selected items
-      if (sendEmails) {
-        for (const sub of selectedSubsData) {
-          if (!sub?.email) {
-            console.log(`Skipping ${sub?.company_name} - no email`)
-            continue
-          }
+        // Collect all items from selected packages for this invitation
+        const allItems = selectedPackageData.flatMap(pkg => pkg.items)
+        const packageNames = selectedPackageData.map(pkg => pkg.name)
 
-          try {
+        try {
+          if (sendEmails) {
             const response = await fetch('/api/send-bid-invitation', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -711,7 +704,9 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
                 project_name: project?.name,
                 project_location: project?.location,
                 bid_due_date: project?.bid_date,
-                bid_items: selectedItemsData.map(item => ({
+                // Include package names in email for clarity
+                package_names: packageNames,
+                bid_items: allItems.map(item => ({
                   trade: item?.trade?.name || 'General',
                   description: item?.description || '',
                   quantity: item?.quantity || '',
@@ -721,7 +716,9 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
                 // Tracking for reply matching
                 project_id: project?.id,
                 subcontractor_id: sub.id,
-                bid_item_ids: selectedItemsData.map(item => item?.id).filter(Boolean),
+                bid_item_ids: allItems.map(item => item?.id).filter(Boolean),
+                // Package IDs for package-level tracking
+                package_ids: selectedPackages,
                 // Drawing attachments
                 drawing_ids: attachDrawings ? selectedDrawings : [],
                 include_drawing_links: useDrawingLinks
@@ -731,19 +728,23 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
             const result = await response.json()
             if (response.ok) {
               emailsSent++
+              invitationCount++
             } else {
               console.error(`Email failed for ${sub.email}:`, result.error)
               toast.error(`Failed to email ${sub.company_name}: ${result.error}`)
             }
-          } catch (err) {
-            console.error('Error sending email to', sub.email, err)
+          } else {
+            // If not sending emails, just track the invitation
+            invitationCount++
           }
+        } catch (err) {
+          console.error('Error sending invitation to', sub.email, err)
         }
       }
 
       const msg = sendEmails
-        ? `Created ${successCount} invitation(s), sent ${emailsSent} email(s)`
-        : `Created ${successCount} invitation(s)`
+        ? `Sent ${emailsSent} invitation(s) for ${selectedPackageData.length} package(s)`
+        : `Created ${invitationCount} invitation(s) for ${selectedPackageData.length} package(s)`
       toast.success(msg)
       onSuccess()
     } catch (error) {
@@ -992,8 +993,11 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
                 <li>• {selectedPackages.length} bid package(s) selected</li>
                 <li>• {selectedItems.length} bid item(s) included</li>
                 <li>• {selectedSubs.length} subcontractor(s) selected</li>
-                <li>• {selectedItems.length * selectedSubs.length} total invitation(s) will be created</li>
+                <li>• <strong>{selectedSubs.length} invitation(s)</strong> will be sent (one per subcontractor)</li>
               </ul>
+              <p className="text-xs text-blue-600 mt-2">
+                Each invitation will request pricing for all {selectedPackages.length} selected package(s).
+              </p>
             </div>
 
             <div>

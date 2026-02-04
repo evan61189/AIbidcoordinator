@@ -96,6 +96,9 @@ export async function handler(event) {
       project_id,
       subcontractor_id,
       bid_item_ids,
+      // Package-level tracking
+      package_ids,
+      package_names,
       // Drawing attachments
       drawing_ids,
       bid_round_id,
@@ -266,11 +269,23 @@ ${drawingLinks.map(d => `- ${d.name}: ${d.url}`).join('\n')}
 
           ${custom_message ? `<p>${custom_message}</p>` : ''}
 
+          ${package_names && package_names.length > 0 ? `
+            <h3>Bid Packages</h3>
+            <p>You are invited to bid on the following package(s):</p>
+            <ul style="margin-bottom: 20px;">
+              ${package_names.map(name => `<li style="font-weight: bold; color: #2c3e50;">${name}</li>`).join('')}
+            </ul>
+            <p style="background-color: #e8f4f8; padding: 10px; border-radius: 5px;">
+              <strong>Important:</strong> Please provide a separate price for each package listed above.
+              If bidding on multiple packages, clearly label each price by package name.
+            </p>
+          ` : ''}
+
           ${drawingLinksHtml}
 
           ${bid_items && bid_items.length > 0 ? `
             <h3>Scope of Work</h3>
-            <p>Please provide pricing for the following items:</p>
+            <p>The following items are included in the scope${package_names?.length > 1 ? ' (organized by package above)' : ''}:</p>
             ${bidItemsHtml}
           ` : ''}
 
@@ -330,6 +345,13 @@ ${project_location ? `LOCATION: ${project_location}` : ''}
 ${bid_due_date ? `BID DUE DATE: ${bid_due_date}` : ''}
 
 ${custom_message || ''}
+${package_names && package_names.length > 0 ? `
+BID PACKAGES:
+${package_names.map(name => `- ${name}`).join('\n')}
+
+IMPORTANT: Please provide a separate price for each package listed above.
+If bidding on multiple packages, clearly label each price by package name.
+` : ''}
 ${drawingLinksText}
 ${bid_items && bid_items.length > 0 ? `
 SCOPE OF WORK:
@@ -423,6 +445,7 @@ ${sender_name || 'The Project Team'}
             to_email,
             subject,
             bid_item_ids: bid_item_ids || [],
+            package_ids: package_ids || [],
             email_sent: true,
             status: 'sent'
           })
