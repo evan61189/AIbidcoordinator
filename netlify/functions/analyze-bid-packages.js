@@ -14,29 +14,55 @@ try {
 const TRADE_RULES = `
 GROUP BID ITEMS BY THESE SUBCONTRACTOR PACKAGES:
 
-1. DEMOLITION: selective demo, structural demo, hazmat, concrete removal, site clearing
-2. SITEWORK: excavation, grading, utilities, erosion control, dewatering (NOT paving/landscaping)
-3. LANDSCAPING: planting, irrigation, sod, mulch
-4. PAVING: asphalt, concrete paving, striping, curbs
-5. CONCRETE: foundations, slabs, tilt-up, site concrete, rebar
-6. MASONRY: CMU, brick, stone veneer
-7. STRUCTURAL STEEL: steel, metal deck, misc metals, stairs, railings
-8. DRYWALL/ACOUSTICAL: metal studs, drywall, wall insulation, ACT ceilings, acoustical, firestopping
+=== GC / SELF-PERFORMED ===
+1. GENERAL REQUIREMENTS: supervision, temp facilities, temp utilities, cleanup, permits, insurance, project management, safety, dumpsters (GC self-performed)
+
+=== SITE & STRUCTURE ===
+2. DEMOLITION: selective demo, structural demo, hazmat, concrete removal, site clearing
+3. SITEWORK: excavation, grading, utilities, erosion control, dewatering (NOT paving/landscaping)
+4. LANDSCAPING: planting, irrigation, sod, mulch
+5. PAVING: asphalt, concrete paving, striping, curbs
+6. CONCRETE: foundations, slabs, tilt-up, site concrete, rebar
+7. MASONRY: CMU, brick, stone veneer
+8. STRUCTURAL STEEL: steel, metal deck, misc metals, stairs, railings
+
+=== BUILDING ENVELOPE ===
 9. ROOFING: membrane, roof insulation, flashings, sheet metal, gutters
 10. WATERPROOFING: below-grade waterproofing, air/vapor barriers, sealants
-11. GLAZING: windows, storefronts, curtain wall, skylights
-12. DOORS/HARDWARE: doors, frames, hardware, access doors
-13. PAINTING: paint, stain, wall coverings, coatings
-14. FLOORING: carpet, VCT, LVT, rubber, tile, wood, epoxy, base
-15. ELECTRICAL: power, wiring, lighting, panels (NOT low voltage, NOT fire alarm)
-16. LOW VOLTAGE: data/voice cabling, AV, security rough-in (SEPARATE from electrical)
-17. FIRE ALARM: alarm panels, detectors, notification devices (SEPARATE from electrical & sprinklers)
-18. PLUMBING: fixtures, piping, water heaters, gas
-19. HVAC: equipment, ductwork, controls, TAB
-20. FIRE PROTECTION: sprinklers, standpipes, fire pump (SEPARATE from fire alarm)
-21. SPECIALTIES: toilet partitions, accessories, lockers, signage
+11. METAL PANELS: ACM, metal wall panels, insulated metal panels, metal siding
+12. GLAZING: windows, storefronts, curtain wall, skylights
 
-CRITICAL: Electrical, Low Voltage, Fire Alarm, and Fire Protection must be 4 SEPARATE packages.
+=== INTERIORS ===
+13. DRYWALL/ACOUSTICAL: metal studs, drywall, WALL INSULATION ONLY, ACT ceilings, acoustical, firestopping
+14. DOORS/HARDWARE: doors, frames, hardware, access doors
+15. MILLWORK/CASEWORK: custom cabinets, built-ins, countertops, architectural woodwork, millwork
+16. PAINTING: paint, stain, wall coverings, coatings
+17. FLOORING: carpet, VCT, LVT, rubber, tile, wood, epoxy, base
+18. WINDOW TREATMENTS: blinds, shades, curtains, interior sun control
+19. SPECIALTIES: toilet partitions, accessories, lockers, signage
+
+=== EQUIPMENT ===
+20. EQUIPMENT: appliances, kitchen equipment, food service equipment, laundry equipment
+21. CONVEYING: elevators, lifts, escalators, dumbwaiters
+
+=== MEP (Mechanical/Electrical/Plumbing) ===
+22. PLUMBING: fixtures, piping, water heaters, gas, PLUMBING PIPE INSULATION
+23. HVAC: equipment, ductwork, controls, TAB, DUCT INSULATION, HVAC PIPE INSULATION
+24. ELECTRICAL: power, wiring, lighting, panels (NOT low voltage, NOT fire alarm)
+25. LOW VOLTAGE: data/voice cabling, AV, security rough-in (SEPARATE from electrical)
+26. FIRE ALARM: alarm panels, detectors, notification devices (SEPARATE from electrical & sprinklers)
+27. FIRE PROTECTION: sprinklers, standpipes, fire pump (SEPARATE from fire alarm)
+
+=== INSULATION RULES (CRITICAL) ===
+- Wall insulation, batt insulation, building insulation → DRYWALL/ACOUSTICAL (drywall sub handles)
+- Pipe insulation, plumbing insulation → PLUMBING (plumbing sub handles their own pipe insulation)
+- Duct insulation, HVAC insulation, mechanical insulation → HVAC (HVAC sub handles their own insulation)
+- Roof insulation → ROOFING
+
+CRITICAL RULES:
+- Electrical, Low Voltage, Fire Alarm, and Fire Protection must be 4 SEPARATE packages
+- Insulation must be split by trade as noted above - do NOT group all insulation together
+- General Requirements items are GC self-performed and should be in their own package
 `
 
 // Helper to retry API calls
