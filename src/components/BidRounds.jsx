@@ -9,6 +9,18 @@ import {
 import toast from 'react-hot-toast'
 import BidLeveling from './BidLeveling'
 
+// Polyfill for Promise.withResolvers (needed by pdfjs-dist 5.x, not available in Safari < 17.4)
+if (typeof Promise.withResolvers !== 'function') {
+  Promise.withResolvers = function() {
+    let resolve, reject
+    const promise = new Promise((res, rej) => {
+      resolve = res
+      reject = rej
+    })
+    return { promise, resolve, reject }
+  }
+}
+
 // Lazy load PDF.js only when needed
 let pdfjsLib = null
 async function loadPdfJs() {
