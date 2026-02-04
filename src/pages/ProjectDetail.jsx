@@ -8,6 +8,7 @@ import {
 import { fetchProject, fetchTrades, createBidItem, fetchSubcontractors, createBid, supabase } from '../lib/supabase'
 import BidLeveling from '../components/BidLeveling'
 import BidRounds from '../components/BidRounds'
+import ScopeBidComparison from '../components/ScopeBidComparison'
 import { format } from 'date-fns'
 import toast from 'react-hot-toast'
 
@@ -479,6 +480,9 @@ export default function ProjectDetail() {
 
       {/* Bid Rounds - Manage pricing rounds and drawing versions */}
       <BidRounds projectId={id} projectName={project?.name} />
+
+      {/* Scope-Based Bid Comparison */}
+      <ScopeBidComparison projectId={id} bidItems={project?.bid_items || []} />
 
       {/* Add Bid Item Modal */}
       {showAddItem && (
