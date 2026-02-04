@@ -5,6 +5,11 @@ try {
   console.error('Failed to load Anthropic SDK:', e)
 }
 
+// Netlify function configuration
+export const config = {
+  maxDuration: 120 // 2 minutes for analyzing large item lists
+}
+
 /**
  * AI-powered bid package analysis
  * Groups bid items based on how subcontractors typically bid work together.
@@ -142,11 +147,12 @@ Return JSON only: {"packages":[{"name":"Name","bidItemIds":["id1","id2"]}]}`
 
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
-    // Call API with retry logic
+    // Call API with retry logic - use temperature 0 for consistent results
     const response = await callWithRetry(() =>
       anthropic.messages.create({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 8000,
+        temperature: 0, // Deterministic for consistent package groupings
         messages: [{ role: 'user', content: prompt }]
       })
     )
