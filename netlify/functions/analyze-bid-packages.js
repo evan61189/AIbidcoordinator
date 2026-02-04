@@ -337,8 +337,13 @@ The "relatedPackages" field should list other packages that the same subcontract
 
 Focus on creating packages that match how subcontractors actually bid work, not just CSI division groupings.`
 
+    // Check for API key
+    if (!process.env.ANTHROPIC_API_KEY) {
+      throw new Error('ANTHROPIC_API_KEY not configured')
+    }
+
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-3-5-sonnet-20241022',
       max_tokens: 4096,
       messages: [{ role: 'user', content: prompt }]
     })
