@@ -130,7 +130,8 @@ export async function fetchSubcontractor(id) {
   return data
 }
 
-export async function createSubcontractor(subcontractor, tradeIds = []) {
+export async function createSubcontractor(subcontractor) {
+  // package_types is stored directly on the subcontractors table as a text array
   const { data, error } = await supabase
     .from('subcontractors')
     .insert(subcontractor)
@@ -138,21 +139,11 @@ export async function createSubcontractor(subcontractor, tradeIds = []) {
     .single()
 
   if (error) throw error
-
-  // Add trade associations
-  if (tradeIds.length > 0) {
-    const tradeLinks = tradeIds.map(tradeId => ({
-      subcontractor_id: data.id,
-      trade_id: tradeId
-    }))
-
-    await supabase.from('subcontractor_trades').insert(tradeLinks)
-  }
-
   return data
 }
 
-export async function updateSubcontractor(id, updates, tradeIds = null) {
+export async function updateSubcontractor(id, updates) {
+  // package_types is stored directly on the subcontractors table as a text array
   const { data, error } = await supabase
     .from('subcontractors')
     .update(updates)
@@ -161,20 +152,6 @@ export async function updateSubcontractor(id, updates, tradeIds = null) {
     .single()
 
   if (error) throw error
-
-  // Update trade associations if provided
-  if (tradeIds !== null) {
-    await supabase.from('subcontractor_trades').delete().eq('subcontractor_id', id)
-
-    if (tradeIds.length > 0) {
-      const tradeLinks = tradeIds.map(tradeId => ({
-        subcontractor_id: id,
-        trade_id: tradeId
-      }))
-      await supabase.from('subcontractor_trades').insert(tradeLinks)
-    }
-  }
-
   return data
 }
 

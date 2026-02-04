@@ -6,6 +6,7 @@ import {
   Search, Mail, Check, X
 } from 'lucide-react'
 import { fetchProject, fetchTrades, createBidItem, fetchSubcontractors, createBid, supabase, fetchScopePackages } from '../lib/supabase'
+import { BID_PACKAGE_TYPES, getPackageType } from '../lib/packageTypes'
 import BidLeveling from '../components/BidLeveling'
 import BidRounds from '../components/BidRounds'
 import ProjectBidViews from '../components/ProjectBidViews'
@@ -580,24 +581,41 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
     getPackageItems(pkgId).map(item => item.id)
   )
 
-  // Get relevant subcontractors based on selected packages' item trades
-  const selectedTradeIds = [...new Set(
-    selectedItems.map(id => bidItems.find(item => item.id === id)?.trade?.id).filter(Boolean)
+  // Get package type IDs from selected packages (normalize names to IDs)
+  const normalizeToPackageTypeId = (name) => {
+    if (!name) return null
+    const normalized = name.toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
+    // Find matching package type
+    const match = BID_PACKAGE_TYPES.find(pt =>
+      pt.id === normalized ||
+      pt.name.toLowerCase() === name.toLowerCase() ||
+      pt.name.toLowerCase().replace(/[^a-z0-9]/g, '') === name.toLowerCase().replace(/[^a-z0-9]/g, '')
+    )
+    return match?.id || null
+  }
+
+  const selectedPackageTypeIds = [...new Set(
+    selectedPackages
+      .map(pkgId => scopePackages.find(p => p.id === pkgId)?.name)
+      .map(normalizeToPackageTypeId)
+      .filter(Boolean)
   )]
 
+  // Get relevant subcontractors based on their package_types matching selected packages
   const relevantSubs = subcontractors.filter(sub =>
-    sub.trades?.some(({ trade }) => selectedTradeIds.includes(trade.id))
+    sub.package_types?.some(pt => selectedPackageTypeIds.includes(pt))
   )
 
-  // Group subcontractors by their trades
-  const subsByTrade = relevantSubs.reduce((acc, sub) => {
-    sub.trades?.forEach(({ trade }) => {
-      if (selectedTradeIds.includes(trade.id)) {
-        if (!acc[trade.id]) {
-          acc[trade.id] = { trade, subs: [] }
+  // Group subcontractors by their package types
+  const subsByPackageType = relevantSubs.reduce((acc, sub) => {
+    sub.package_types?.forEach(typeId => {
+      if (selectedPackageTypeIds.includes(typeId)) {
+        const pkgType = getPackageType(typeId)
+        if (!acc[typeId]) {
+          acc[typeId] = { packageType: pkgType, subs: [] }
         }
-        if (!acc[trade.id].subs.find(s => s.id === sub.id)) {
-          acc[trade.id].subs.push(sub)
+        if (!acc[typeId].subs.find(s => s.id === sub.id)) {
+          acc[typeId].subs.push(sub)
         }
       }
     })
@@ -909,7 +927,7 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
           <>
             <div className="p-4 border-b border-gray-200">
               <p className="text-sm text-gray-600 mb-2">
-                Showing subcontractors for selected trades: {selectedTradeIds.length} trade(s)
+                Showing subcontractors for selected packages: {selectedPackageTypeIds.length} package type(s)
               </p>
               <div className="flex items-center gap-2">
                 <button
@@ -932,11 +950,11 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
             </div>
 
             <div className="flex-1 overflow-y-auto p-4">
-              {Object.keys(subsByTrade).length > 0 ? (
-                Object.values(subsByTrade).map(({ trade, subs }) => (
-                  <div key={trade.id} className="mb-4">
+              {Object.keys(subsByPackageType).length > 0 ? (
+                Object.values(subsByPackageType).map(({ packageType, subs }) => (
+                  <div key={packageType?.id || 'unknown'} className="mb-4">
                     <div className="font-medium text-gray-900 mb-2">
-                      Div {trade.division_code}: {trade.name}
+                      {packageType?.name || 'Other'}
                     </div>
                     <div className="border rounded-lg divide-y">
                       {subs.map(sub => (
@@ -981,7 +999,9 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
                 ))
               ) : (
                 <div className="text-center py-8 text-gray-500">
-                  No subcontractors found for the selected trades.
+                  No subcontractors found for the selected bid packages.
+                  <br />
+                  <span className="text-sm">Make sure subcontractors have matching package types set.</span>
                   <br />
                   <Link to="/subcontractors/new" className="text-primary-600 hover:underline">
                     Add subcontractors
