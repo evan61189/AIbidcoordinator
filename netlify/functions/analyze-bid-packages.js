@@ -90,10 +90,16 @@ Return JSON only: {"packages":[{"name":"Name","bidItemIds":["id1","id2"]}]}`
     const match = text.match(/\{[\s\S]*\}/)
 
     if (!match) {
-      return { statusCode: 500, headers, body: JSON.stringify({ error: 'Invalid AI response', raw: text.substring(0, 200) }) }
+      return { statusCode: 500, headers, body: JSON.stringify({ error: 'Invalid AI response - no JSON found', raw: text.substring(0, 300) }) }
     }
 
-    const analysis = JSON.parse(match[0])
+    let analysis
+    try {
+      analysis = JSON.parse(match[0])
+    } catch (parseError) {
+      return { statusCode: 500, headers, body: JSON.stringify({ error: 'Failed to parse AI JSON', raw: match[0].substring(0, 300) }) }
+    }
+
     return { statusCode: 200, headers, body: JSON.stringify({ success: true, analysis }) }
 
   } catch (error) {
