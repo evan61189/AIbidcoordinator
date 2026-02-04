@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { supabase, fetchScopePackages, createScopePackage, updateScopePackage, deleteScopePackage } from '../lib/supabase'
+import { supabase, fetchScopePackages, createScopePackage, updateScopePackage, deleteScopePackage, fetchApprovedPackageBidsForProject } from '../lib/supabase'
 import {
   Package,
   Layers,
@@ -34,6 +34,7 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
   const [activeView, setActiveView] = useState('package') // 'package', 'division', 'client'
   const [scopePackages, setScopePackages] = useState([])
   const [bids, setBids] = useState([])
+  const [packageBids, setPackageBids] = useState([]) // Approved package-level bids
   const [loading, setLoading] = useState(true)
   const [analyzing, setAnalyzing] = useState(false)
   const [aiSuggestions, setAiSuggestions] = useState(null)
@@ -64,7 +65,7 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
       const packagesData = await fetchScopePackages(projectId)
       setScopePackages(packagesData || [])
 
-      // Load submitted bids
+      // Load submitted bids (item-level)
       let projectBids = []
       try {
         const { data: bidsData, error: bidsError } = await supabase
@@ -91,8 +92,17 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
 
       setBids(projectBids)
 
-      // Auto-select lowest bids for client view
-      autoSelectLowestBids(projectBids)
+      // Load approved package bids
+      let approvedPackageBids = []
+      try {
+        approvedPackageBids = await fetchApprovedPackageBidsForProject(projectId) || []
+      } catch (e) {
+        console.warn('Could not load package bids:', e.message)
+      }
+      setPackageBids(approvedPackageBids)
+
+      // Auto-select lowest bids for client view (considering both item and package bids)
+      autoSelectLowestBids(projectBids, approvedPackageBids, packagesData || [])
     } catch (error) {
       console.error('Error loading data:', error)
       // Don't show error toast for missing tables - just show empty state
@@ -101,10 +111,11 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
     }
   }
 
-  function autoSelectLowestBids(projectBids) {
+  function autoSelectLowestBids(projectBids, approvedPackageBids = [], packages = []) {
     const selected = {}
     const bidsByItem = {}
 
+    // First, collect all item-level bids
     for (const bid of projectBids) {
       const itemId = bid.bid_item?.id
       if (!itemId) continue
@@ -112,6 +123,39 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
       bidsByItem[itemId].push(bid)
     }
 
+    // Then, add package-level bids as virtual item bids
+    // For each package bid, distribute the amount across items in that package
+    for (const pkgBid of approvedPackageBids) {
+      const pkg = pkgBid.scope_package
+      if (!pkg || !pkgBid.amount) continue
+
+      // Get items in this package
+      const packageItems = pkg.scope_package_items || []
+      const itemCount = packageItems.length || 1
+
+      // Distribute package amount across items (evenly for now, or could be proportional)
+      const amountPerItem = pkgBid.amount / itemCount
+
+      for (const pkgItem of packageItems) {
+        const itemId = pkgItem.bid_item_id
+        if (!itemId) continue
+        if (!bidsByItem[itemId]) bidsByItem[itemId] = []
+
+        // Add as a virtual bid for this item
+        bidsByItem[itemId].push({
+          id: `pkg-${pkgBid.id}-${itemId}`,
+          amount: amountPerItem,
+          subcontractor: pkgBid.subcontractor,
+          isPackageBid: true,
+          packageBidId: pkgBid.id,
+          packageName: pkg.name,
+          packageTotalAmount: pkgBid.amount,
+          itemsInPackage: itemCount
+        })
+      }
+    }
+
+    // Select the lowest bid for each item
     for (const [itemId, itemBids] of Object.entries(bidsByItem)) {
       const sorted = itemBids
         .filter(b => b.amount && b.amount > 0)
@@ -283,13 +327,36 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
       // For client view, apply markup to each item
       const amount = includeMarkup ? getItemWithMarkup(item.id) : baseAmount
       const manualAmount = manualAmounts[item.id]
+
+      // Get all bids for this item, including package bids as virtual bids
+      const itemBids = bids.filter(b => b.bid_item?.id === item.id)
+
+      // Also include package bids that cover this item
+      const packageBidsForItem = packageBids.filter(pkgBid => {
+        const pkgItems = pkgBid.scope_package?.scope_package_items || []
+        return pkgItems.some(pi => pi.bid_item_id === item.id)
+      }).map(pkgBid => {
+        const pkgItems = pkgBid.scope_package?.scope_package_items || []
+        const itemCount = pkgItems.length || 1
+        return {
+          id: `pkg-${pkgBid.id}`,
+          amount: pkgBid.amount / itemCount,
+          subcontractor: pkgBid.subcontractor,
+          isPackageBid: true,
+          packageName: pkgBid.scope_package?.name,
+          packageTotalAmount: pkgBid.amount,
+          itemsInPackage: itemCount
+        }
+      })
+
       groups[divCode].items.push({
         ...item,
         selectedBid,
         baseAmount,
         amount,
         manualAmount,
-        allBids: bids.filter(b => b.bid_item?.id === item.id)
+        allBids: [...itemBids, ...packageBidsForItem],
+        isFromPackageBid: selectedBid?.isPackageBid
       })
       groups[divCode].total += amount
     }

@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { DollarSign, Search, Filter, Zap, RefreshCw, Mail, Trash2, CheckSquare, Square, Inbox, Check, X, Eye, Split, Layers } from 'lucide-react'
-import { fetchBids, fetchProjects, updateBid, deleteBids, fetchDrawingsForProject, fetchBidResponses, updateBidResponse } from '../lib/supabase'
+import { DollarSign, Search, Filter, Zap, RefreshCw, Mail, Trash2, CheckSquare, Square, Inbox, Check, X, Eye, Split, Layers, Package } from 'lucide-react'
+import { fetchBids, fetchProjects, updateBid, deleteBids, fetchDrawingsForProject, fetchBidResponses, updateBidResponse, fetchPackageBids, approvePackageBid, rejectPackageBid } from '../lib/supabase'
 import { format } from 'date-fns'
 
 export default function Bids() {
   const [bids, setBids] = useState([])
   const [bidResponses, setBidResponses] = useState([])
+  const [packageBids, setPackageBids] = useState([])
   const [projects, setProjects] = useState([])
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState('all')
@@ -16,6 +17,7 @@ export default function Bids() {
   const [selectedBids, setSelectedBids] = useState(new Set())
   const [deleting, setDeleting] = useState(false)
   const [expandedResponse, setExpandedResponse] = useState(null)
+  const [expandedPackageBid, setExpandedPackageBid] = useState(null)
 
   useEffect(() => {
     loadData()
@@ -24,14 +26,16 @@ export default function Bids() {
   async function loadData() {
     setLoading(true)
     try {
-      const [bidsData, projectsData, responsesData] = await Promise.all([
+      const [bidsData, projectsData, responsesData, packageBidsData] = await Promise.all([
         fetchBids({ status: statusFilter !== 'all' ? statusFilter : undefined }),
         fetchProjects('bidding'),
-        fetchBidResponses('pending_review')
+        fetchBidResponses('pending_review'),
+        fetchPackageBids('pending_approval')
       ])
       setBids(bidsData || [])
       setProjects(projectsData || [])
       setBidResponses(responsesData || [])
+      setPackageBids(packageBidsData || [])
       setSelectedBids(new Set()) // Clear selection on reload
     } catch (error) {
       console.error('Error loading bids:', error)
@@ -178,6 +182,30 @@ export default function Bids() {
     } catch (error) {
       console.error('Error rejecting response:', error)
       alert('Failed to reject response')
+    }
+  }
+
+  // Package bid approval handlers
+  async function handleApprovePackageBid(packageBid) {
+    try {
+      await approvePackageBid(packageBid.id)
+      alert(`Package bid approved: ${packageBid.scope_package?.name} - $${packageBid.amount?.toLocaleString()}`)
+      loadData()
+    } catch (error) {
+      console.error('Error approving package bid:', error)
+      alert('Failed to approve package bid')
+    }
+  }
+
+  async function handleRejectPackageBid(packageBidId) {
+    if (!confirm('Are you sure you want to reject this package bid?')) return
+
+    try {
+      await rejectPackageBid(packageBidId)
+      loadData()
+    } catch (error) {
+      console.error('Error rejecting package bid:', error)
+      alert('Failed to reject package bid')
     }
   }
 
@@ -462,6 +490,102 @@ export default function Bids() {
                     </button>
                     <button
                       onClick={() => handleRejectResponse(response.id)}
+                      className="btn btn-sm bg-red-100 text-red-600 hover:bg-red-200 flex items-center gap-1"
+                    >
+                      <X className="h-4 w-4" />
+                      Reject
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Pending Package Bids */}
+      {packageBids.length > 0 && (
+        <div className="card border-2 border-blue-200 bg-blue-50">
+          <div className="p-4 border-b border-blue-200">
+            <div className="flex items-center gap-2">
+              <Package className="h-5 w-5 text-blue-600" />
+              <h2 className="text-lg font-semibold text-blue-800">
+                Pending Package Bids ({packageBids.length})
+              </h2>
+            </div>
+            <p className="text-sm text-blue-600 mt-1">
+              Package-level bids awaiting approval. Approve to include in bid leveling.
+            </p>
+          </div>
+          <div className="divide-y divide-blue-200">
+            {packageBids.map(pkgBid => (
+              <div key={pkgBid.id} className="p-4">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-semibold text-gray-900">
+                        {pkgBid.subcontractor?.company_name || 'Unknown'}
+                      </span>
+                      <span className="text-gray-400">•</span>
+                      <span className="text-gray-600">
+                        {pkgBid.project?.name || 'Unknown Project'}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-4 text-sm">
+                      <span className="badge bg-blue-100 text-blue-800 flex items-center gap-1">
+                        <Package className="h-3 w-3" />
+                        {pkgBid.scope_package?.name || 'Unknown Package'}
+                      </span>
+                      <span className="font-bold text-2xl text-blue-700">
+                        ${pkgBid.amount?.toLocaleString() || '0'}
+                      </span>
+                      <span className={`badge ${
+                        pkgBid.source === 'clarification_response' ? 'bg-purple-100 text-purple-700' :
+                        pkgBid.source === 'email' ? 'bg-green-100 text-green-700' :
+                        'bg-gray-100 text-gray-700'
+                      }`}>
+                        {pkgBid.source === 'clarification_response' ? 'From Clarification' :
+                         pkgBid.source === 'email' ? 'From Email' : pkgBid.source}
+                      </span>
+                      <span className="text-gray-400">
+                        {pkgBid.submitted_at && format(new Date(pkgBid.submitted_at), 'MMM d, h:mm a')}
+                      </span>
+                    </div>
+                    {/* Expandable details */}
+                    {expandedPackageBid === pkgBid.id && (
+                      <div className="mt-3 p-3 bg-white rounded border text-sm space-y-2">
+                        {pkgBid.scope_included && (
+                          <div><strong>Includes:</strong> {pkgBid.scope_included}</div>
+                        )}
+                        {pkgBid.scope_excluded && (
+                          <div><strong>Excludes:</strong> {pkgBid.scope_excluded}</div>
+                        )}
+                        {pkgBid.clarifications && (
+                          <div><strong>Clarifications:</strong> {pkgBid.clarifications}</div>
+                        )}
+                        {pkgBid.notes && (
+                          <div><strong>Notes:</strong> {pkgBid.notes}</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setExpandedPackageBid(expandedPackageBid === pkgBid.id ? null : pkgBid.id)}
+                      className="btn btn-sm bg-gray-100 text-gray-700 hover:bg-gray-200"
+                    >
+                      <Eye className="h-4 w-4" />
+                      {expandedPackageBid === pkgBid.id ? 'Hide' : 'Details'}
+                    </button>
+                    <button
+                      onClick={() => handleApprovePackageBid(pkgBid)}
+                      className="btn btn-sm bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-1"
+                    >
+                      <Check className="h-4 w-4" />
+                      Approve
+                    </button>
+                    <button
+                      onClick={() => handleRejectPackageBid(pkgBid.id)}
                       className="btn btn-sm bg-red-100 text-red-600 hover:bg-red-200 flex items-center gap-1"
                     >
                       <X className="h-4 w-4" />

@@ -473,3 +473,109 @@ export async function fetchBidsForLeveling(projectId) {
   // Filter out nulls from the join
   return (data || []).filter(b => b.bid_item)
 }
+
+// ============================================
+// PACKAGE BIDS - For package-level bid management
+// ============================================
+
+export async function fetchPackageBids(status = null, projectId = null) {
+  let query = supabase
+    .from('package_bids')
+    .select(`
+      *,
+      scope_package:scope_packages (id, name, package_type),
+      subcontractor:subcontractors (id, company_name, contact_name, email),
+      project:projects (id, name),
+      bid_response:bid_responses (id, total_amount, ai_confidence_score),
+      clarification:bid_clarifications (id, status, packages_requested)
+    `)
+    .order('created_at', { ascending: false })
+
+  if (status && status !== 'all') {
+    query = query.eq('status', status)
+  }
+
+  if (projectId) {
+    query = query.eq('project_id', projectId)
+  }
+
+  const { data, error } = await query
+  if (error) throw error
+  return data
+}
+
+export async function updatePackageBid(id, updates) {
+  const { data, error } = await supabase
+    .from('package_bids')
+    .update({
+      ...updates,
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', id)
+    .select()
+    .single()
+
+  if (error) throw error
+  return data
+}
+
+export async function approvePackageBid(packageBidId) {
+  const { data, error } = await supabase
+    .from('package_bids')
+    .update({
+      status: 'approved',
+      approved_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', packageBidId)
+    .select()
+    .single()
+
+  if (error) throw error
+  return data
+}
+
+export async function rejectPackageBid(packageBidId) {
+  const { data, error } = await supabase
+    .from('package_bids')
+    .update({
+      status: 'rejected',
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', packageBidId)
+    .select()
+    .single()
+
+  if (error) throw error
+  return data
+}
+
+// Fetch approved package bids for bid leveling views
+export async function fetchApprovedPackageBidsForProject(projectId) {
+  const { data, error } = await supabase
+    .from('package_bids')
+    .select(`
+      *,
+      scope_package:scope_packages (
+        id,
+        name,
+        package_type,
+        scope_package_items (
+          bid_item_id,
+          bid_item:bid_items (
+            id,
+            description,
+            item_number,
+            trade:trades (id, name, division_code)
+          )
+        )
+      ),
+      subcontractor:subcontractors (id, company_name)
+    `)
+    .eq('project_id', projectId)
+    .eq('status', 'approved')
+    .order('amount', { ascending: true })
+
+  if (error) throw error
+  return data
+}
