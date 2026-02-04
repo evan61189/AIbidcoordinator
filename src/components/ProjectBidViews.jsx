@@ -44,7 +44,7 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
 
   // Client view state
   const [selectedBids, setSelectedBids] = useState({}) // bidItemId -> bid
-  const [markupPercent, setMarkupPercent] = useState(10)
+  const [markupPercent, setMarkupPercent] = useState(0) // Hidden markup (not shown on exports)
   const [generalConditions, setGeneralConditions] = useState(0)
   const [overheadProfit, setOverheadProfit] = useState(0)
   const [contingency, setContingency] = useState(0)
@@ -309,7 +309,7 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
       ),
       [],
       ['', '', 'Subtotal', getSubtotal()],
-      ['', '', `Markup (${markupPercent}%)`, getMarkupAmount()],
+      // Note: Markup is hidden in exports - included in totals but not shown as line item
       ['', '', 'General Conditions', generalConditions],
       ['', '', 'OH&P', overheadProfit],
       ['', '', 'Contingency', contingency],
@@ -743,8 +743,9 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
                   <span className="text-gray-600">Subtotal</span>
                   <span className="font-medium">{formatCurrency(getSubtotal())}</span>
                 </div>
+                {/* Markup is hidden in print/export - shown only in edit mode */}
                 {markupPercent > 0 && (
-                  <div className="flex justify-between">
+                  <div className="flex justify-between print:hidden">
                     <span className="text-gray-600">Markup ({markupPercent}%)</span>
                     <span className="font-medium">{formatCurrency(getMarkupAmount())}</span>
                   </div>
