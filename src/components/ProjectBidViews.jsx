@@ -336,9 +336,10 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
   if (loading) {
     return (
       <div className="bg-white rounded-lg shadow p-6">
-        <div className="flex items-center justify-center gap-2 text-gray-500">
+        <h2 className="text-lg font-semibold mb-4">Project Pricing</h2>
+        <div className="flex items-center justify-center gap-2 text-gray-500 py-8">
           <RefreshCw className="w-5 h-5 animate-spin" />
-          Loading...
+          Loading pricing data...
         </div>
       </div>
     )
