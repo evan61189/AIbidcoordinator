@@ -38,6 +38,7 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
   const [loading, setLoading] = useState(true)
   const [analyzing, setAnalyzing] = useState(false)
   const [aiSuggestions, setAiSuggestions] = useState(null)
+  const [creatingPackages, setCreatingPackages] = useState(false)
   const [showCreatePackage, setShowCreatePackage] = useState(false)
   const [editingPackage, setEditingPackage] = useState(null)
   const [expandedPackages, setExpandedPackages] = useState({})
@@ -206,6 +207,8 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
   }
 
   async function createFromSuggestion(suggestion) {
+    if (creatingPackages) return // Prevent double-clicks
+    setCreatingPackages(true)
     try {
       await createScopePackage(projectId, suggestion.name, suggestion.description, suggestion.bidItemIds)
       toast.success(`Created: ${suggestion.name}`)
@@ -217,13 +220,20 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
     } catch (error) {
       console.error('Error creating package:', error)
       toast.error('Failed to create package')
+    } finally {
+      setCreatingPackages(false)
     }
   }
 
   async function createAllSuggestions() {
-    if (!aiSuggestions?.packages?.length) return
+    if (!aiSuggestions?.packages?.length || creatingPackages) return
+    setCreatingPackages(true)
+    // Capture suggestions and clear immediately to prevent double-clicks
+    const packagesToCreate = [...aiSuggestions.packages]
+    setAiSuggestions(null)
+
     let created = 0
-    for (const suggestion of aiSuggestions.packages) {
+    for (const suggestion of packagesToCreate) {
       try {
         await createScopePackage(projectId, suggestion.name, suggestion.description, suggestion.bidItemIds)
         created++
@@ -232,7 +242,7 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
       }
     }
     toast.success(`Created ${created} packages`)
-    setAiSuggestions(null)
+    setCreatingPackages(false)
     loadData()
   }
 
@@ -583,10 +593,18 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
               <span className="text-sm text-indigo-600">({aiSuggestions.packages.length})</span>
             </div>
             <div className="flex gap-2">
-              <button onClick={createAllSuggestions} className="px-3 py-1 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700">
-                Create All
+              <button
+                onClick={createAllSuggestions}
+                disabled={creatingPackages}
+                className="px-3 py-1 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {creatingPackages ? 'Creating...' : 'Create All'}
               </button>
-              <button onClick={() => setAiSuggestions(null)} className="px-3 py-1 text-sm text-indigo-600 hover:bg-indigo-100 rounded">
+              <button
+                onClick={() => setAiSuggestions(null)}
+                disabled={creatingPackages}
+                className="px-3 py-1 text-sm text-indigo-600 hover:bg-indigo-100 rounded disabled:opacity-50"
+              >
                 Dismiss
               </button>
             </div>
@@ -609,8 +627,12 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
                   <div className="text-sm text-gray-600 mt-1">{suggestion.description}</div>
                   <div className="text-xs text-gray-500 mt-1">{suggestion.bidItemIds?.length || 0} items</div>
                 </div>
-                <button onClick={() => createFromSuggestion(suggestion)} className="ml-3 px-3 py-1 text-sm bg-indigo-100 text-indigo-700 rounded hover:bg-indigo-200">
-                  Create
+                <button
+                  onClick={() => createFromSuggestion(suggestion)}
+                  disabled={creatingPackages}
+                  className="ml-3 px-3 py-1 text-sm bg-indigo-100 text-indigo-700 rounded hover:bg-indigo-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {creatingPackages ? '...' : 'Create'}
                 </button>
               </div>
             ))}
