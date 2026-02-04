@@ -509,8 +509,20 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
     async function loadData() {
       try {
         // Load scope packages
-        const packages = await fetchScopePackages(projectId)
-        setScopePackages(packages || [])
+        const allPackages = await fetchScopePackages(projectId)
+
+        // Deduplicate packages by name, keeping the one with the most items
+        const packagesByName = {}
+        allPackages?.forEach(pkg => {
+          const name = pkg.name?.toLowerCase()?.trim()
+          if (!name) return
+          const itemCount = pkg.items?.length || 0
+          if (!packagesByName[name] || itemCount > (packagesByName[name].items?.length || 0)) {
+            packagesByName[name] = pkg
+          }
+        })
+        const packages = Object.values(packagesByName)
+        setScopePackages(packages)
 
         // Build initial item assignments from packages
         const assignments = {}
@@ -524,7 +536,7 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
         setItemAssignments(assignments)
 
         // Select all packages by default
-        setSelectedPackages((packages || []).map(p => p.id))
+        setSelectedPackages(packages.map(p => p.id))
       } catch (error) {
         console.error('Error loading scope packages:', error)
       } finally {
