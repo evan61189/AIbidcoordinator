@@ -36,3 +36,7 @@
 # Process bid responses from email replies
 [functions."process-bid-response"]
   external_node_modules = ["@anthropic-ai/sdk", "busboy"]
+
+# AI-powered bid package analysis
+[functions."analyze-bid-packages"]
+  external_node_modules = ["@anthropic-ai/sdk"]
