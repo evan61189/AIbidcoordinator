@@ -30,7 +30,7 @@ import toast from 'react-hot-toast'
  * 2. Division View - CSI MasterFormat divisions
  * 3. Client View - Customer-facing with markup, GC, OH&P
  */
-export default function ProjectBidViews({ projectId, project, bidItems = [], onRefresh }) {
+export default function ProjectBidViews({ projectId, project, bidItems = [], onRefresh, onAddBidItem, onInviteSubs }) {
   const [activeView, setActiveView] = useState('package') // 'package', 'division', 'client'
   const [scopePackages, setScopePackages] = useState([])
   const [bids, setBids] = useState([])
@@ -336,9 +336,10 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
   if (loading) {
     return (
       <div className="bg-white rounded-lg shadow p-6">
-        <div className="flex items-center justify-center gap-2 text-gray-500">
+        <h2 className="text-lg font-semibold mb-4">Project Pricing</h2>
+        <div className="flex items-center justify-center gap-2 text-gray-500 py-8">
           <RefreshCw className="w-5 h-5 animate-spin" />
-          Loading...
+          Loading pricing data...
         </div>
       </div>
     )
@@ -349,7 +350,10 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
       {/* View Toggle Header */}
       <div className="px-6 py-4 border-b">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold">Project Pricing</h2>
+          <div>
+            <h2 className="text-lg font-semibold">Project Pricing</h2>
+            <p className="text-sm text-gray-500">{bidItems.length} bid items</p>
+          </div>
           <div className="flex gap-2">
             <button onClick={loadData} className="p-2 text-gray-600 hover:bg-gray-100 rounded" title="Refresh">
               <RefreshCw className="w-4 h-4" />
@@ -373,6 +377,22 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
                   <Printer className="w-4 h-4" /> Print
                 </button>
               </>
+            )}
+            {onInviteSubs && (
+              <button
+                onClick={onInviteSubs}
+                className="flex items-center gap-1 px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 rounded"
+              >
+                <Users className="w-4 h-4" /> Invite Subs
+              </button>
+            )}
+            {onAddBidItem && (
+              <button
+                onClick={onAddBidItem}
+                className="flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white hover:bg-blue-700 rounded"
+              >
+                <Plus className="w-4 h-4" /> Add Bid Item
+              </button>
             )}
           </div>
         </div>
