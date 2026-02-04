@@ -29,24 +29,36 @@ SUBCONTRACTOR PACKAGES (group bid items by these trade bundles):
 `
 
 exports.handler = async (event) => {
+  // Always return JSON with proper headers
+  const jsonResponse = (statusCode, data) => ({
+    statusCode,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  })
+
   if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, body: 'Method not allowed' }
+    return jsonResponse(405, { error: 'Method not allowed' })
   }
 
   try {
-    const { bidItems } = JSON.parse(event.body)
+    let bidItems
+    try {
+      const body = JSON.parse(event.body)
+      bidItems = body.bidItems
+    } catch (e) {
+      return jsonResponse(400, { error: 'Invalid JSON in request body' })
+    }
 
     if (!bidItems || bidItems.length === 0) {
-      return {
-        statusCode: 400,
-        body: JSON.stringify({ error: 'No bid items provided' })
-      }
+      return jsonResponse(400, { error: 'No bid items provided' })
     }
 
     // Check for API key
     if (!process.env.ANTHROPIC_API_KEY) {
-      throw new Error('ANTHROPIC_API_KEY not configured')
+      return jsonResponse(500, { error: 'ANTHROPIC_API_KEY not configured. Add it in Netlify site settings.' })
     }
+
+    console.log(`Analyzing ${bidItems.length} bid items...`)
 
     // Build concise bid item list
     const itemList = bidItems.map(item =>
@@ -68,44 +80,59 @@ ${itemList}
 Return ONLY valid JSON:
 {"packages":[{"name":"Package Name","subcontractorType":"Trade Type","bidItemIds":["id1","id2"]}]}`
 
-    const anthropic = new Anthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY
-    })
+    let anthropic
+    try {
+      anthropic = new Anthropic({
+        apiKey: process.env.ANTHROPIC_API_KEY
+      })
+    } catch (e) {
+      console.error('Failed to initialize Anthropic client:', e)
+      return jsonResponse(500, { error: 'Failed to initialize AI client: ' + e.message })
+    }
 
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 2048,
-      messages: [{ role: 'user', content: prompt }]
-    })
+    let response
+    try {
+      response = await anthropic.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 2048,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    } catch (e) {
+      console.error('Anthropic API error:', e)
+      return jsonResponse(500, {
+        error: 'AI API error: ' + e.message,
+        details: e.status ? `Status: ${e.status}` : undefined
+      })
+    }
 
-    const responseText = response.content[0].text
+    const responseText = response.content[0]?.text
+    if (!responseText) {
+      return jsonResponse(500, { error: 'Empty response from AI' })
+    }
 
     // Extract JSON from response
     let jsonMatch = responseText.match(/\{[\s\S]*\}/)
     if (!jsonMatch) {
-      throw new Error('No valid JSON in AI response')
+      console.error('No JSON in response:', responseText.substring(0, 200))
+      return jsonResponse(500, { error: 'No valid JSON in AI response' })
     }
 
-    const analysis = JSON.parse(jsonMatch[0])
-
-    return {
-      statusCode: 200,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        success: true,
-        analysis
-      })
+    let analysis
+    try {
+      analysis = JSON.parse(jsonMatch[0])
+    } catch (e) {
+      console.error('JSON parse error:', e, jsonMatch[0].substring(0, 200))
+      return jsonResponse(500, { error: 'Failed to parse AI response as JSON' })
     }
+
+    console.log(`Successfully created ${analysis.packages?.length || 0} packages`)
+    return jsonResponse(200, { success: true, analysis })
 
   } catch (error) {
-    console.error('Error analyzing bid packages:', error)
-    return {
-      statusCode: 500,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        error: error.message,
-        details: error.status ? `API Status: ${error.status}` : undefined
-      })
-    }
+    console.error('Unexpected error:', error)
+    return jsonResponse(500, {
+      error: error.message || 'Unknown error',
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    })
   }
 }
