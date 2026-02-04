@@ -27,19 +27,62 @@ export default function Bids() {
   async function loadData() {
     setLoading(true)
     try {
-      const [bidsData, projectsData, responsesData, packageBidsData, invitationsData] = await Promise.all([
-        fetchBids({ status: statusFilter !== 'all' ? statusFilter : undefined }),
-        fetchProjects('bidding'),
-        fetchBidResponses('pending_review'),
-        fetchPackageBids('pending_approval'),
-        fetchPendingInvitations()
-      ])
-      setBids(bidsData || [])
-      setProjects(projectsData || [])
-      setBidResponses(responsesData || [])
-      setPackageBids(packageBidsData || [])
-      setPendingInvitations(invitationsData || [])
+      // Fetch each data source independently so one failure doesn't break everything
+      let bidsData = []
+      let projectsData = []
+      let responsesData = []
+      let packageBidsData = []
+      let invitationsData = []
+
+      // Fetch bids
+      try {
+        bidsData = await fetchBids({ status: statusFilter !== 'all' ? statusFilter : undefined }) || []
+      } catch (e) {
+        console.warn('Error fetching bids:', e.message)
+      }
+
+      // Fetch projects
+      try {
+        projectsData = await fetchProjects('bidding') || []
+      } catch (e) {
+        console.warn('Error fetching projects:', e.message)
+      }
+
+      // Fetch bid responses
+      try {
+        responsesData = await fetchBidResponses('pending_review') || []
+      } catch (e) {
+        console.warn('Error fetching bid responses:', e.message)
+      }
+
+      // Fetch package bids (may fail if table doesn't exist yet)
+      try {
+        packageBidsData = await fetchPackageBids('pending_approval') || []
+      } catch (e) {
+        console.warn('Error fetching package bids (table may not exist):', e.message)
+      }
+
+      // Fetch pending invitations
+      try {
+        invitationsData = await fetchPendingInvitations() || []
+      } catch (e) {
+        console.warn('Error fetching pending invitations:', e.message)
+      }
+
+      setBids(bidsData)
+      setProjects(projectsData)
+      setBidResponses(responsesData)
+      setPackageBids(packageBidsData)
+      setPendingInvitations(invitationsData)
       setSelectedBids(new Set()) // Clear selection on reload
+
+      console.log('Loaded data:', {
+        bids: bidsData.length,
+        projects: projectsData.length,
+        responses: responsesData.length,
+        packageBids: packageBidsData.length,
+        invitations: invitationsData.length
+      })
     } catch (error) {
       console.error('Error loading bids:', error)
     } finally {
