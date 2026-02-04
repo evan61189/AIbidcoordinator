@@ -52,12 +52,12 @@ GROUP BID ITEMS BY THESE SUBCONTRACTOR PACKAGES:
 25. CONVEYING: elevators, lifts, escalators, dumbwaiters
 
 === MEP (Mechanical/Electrical/Plumbing) ===
-26. PLUMBING: fixtures, piping, water heaters, gas, PLUMBING PIPE INSULATION
-27. HVAC: equipment, ductwork, controls, TAB, DUCT INSULATION, HVAC PIPE INSULATION
-28. ELECTRICAL: power, wiring, lighting, panels (NOT low voltage, NOT fire alarm)
-29. LOW VOLTAGE: data/voice cabling, AV, security rough-in (SEPARATE from electrical)
-30. FIRE ALARM: alarm panels, detectors, notification devices (SEPARATE from electrical & sprinklers)
-31. FIRE PROTECTION: sprinklers, standpipes, fire pump (SEPARATE from fire alarm)
+26. PLUMBING (Division 22): fixtures, piping, water heaters, gas, PLUMBING PIPE INSULATION
+27. HVAC (Division 23): equipment, ductwork, controls, TAB, DUCT INSULATION, HVAC PIPE INSULATION
+28. ELECTRICAL (Division 26): power, wiring, lighting, panels (NOT low voltage, NOT fire alarm)
+29. LOW VOLTAGE (Division 27): data/voice cabling, AV, security rough-in (SEPARATE from electrical)
+30. FIRE ALARM (Division 28): alarm panels, detectors, notification devices (SEPARATE from electrical & sprinklers - NOT Division 21)
+31. FIRE PROTECTION (Division 21): sprinklers, standpipes, fire pump (SEPARATE from fire alarm - this is Division 21)
 
 === INSULATION RULES (CRITICAL) ===
 - Wall insulation, batt insulation, building insulation → DRYWALL/ACOUSTICAL (drywall sub handles)
@@ -67,6 +67,8 @@ GROUP BID ITEMS BY THESE SUBCONTRACTOR PACKAGES:
 
 CRITICAL RULES:
 - Electrical, Low Voltage, Fire Alarm, and Fire Protection must be 4 SEPARATE packages
+- FIRE ALARM is Division 28 - do NOT put it under Division 21
+- FIRE PROTECTION (sprinklers) is Division 21 - this is different from Fire Alarm
 - Insulation must be split by trade as noted above - do NOT group all insulation together
 - General Requirements items are GC self-performed and should be in their own package
 `
