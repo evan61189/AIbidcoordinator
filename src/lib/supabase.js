@@ -34,14 +34,6 @@ export async function fetchProject(id) {
     .from('projects')
     .select(`
       *,
-      bid_items (
-        *,
-        trade:trades (*),
-        bids (
-          *,
-          subcontractor:subcontractors (*)
-        )
-      ),
       drawings (*),
       project_subcontractors (
         subcontractor:subcontractors (*)
@@ -52,6 +44,51 @@ export async function fetchProject(id) {
 
   if (error) throw error
   return data
+}
+
+// Fetch bid items for a project - only from active rounds
+export async function fetchProjectBidItems(projectId) {
+  // First get active bid rounds for this project
+  const { data: rounds } = await supabase
+    .from('bid_rounds')
+    .select('id')
+    .eq('project_id', projectId)
+    .eq('status', 'active')
+
+  const activeRoundIds = rounds?.map(r => r.id) || []
+
+  if (activeRoundIds.length === 0) {
+    // No active rounds - return empty
+    return []
+  }
+
+  // Fetch bid items from active rounds only
+  const { data, error } = await supabase
+    .from('bid_items')
+    .select(`
+      *,
+      trade:trades (*),
+      bids (
+        *,
+        subcontractor:subcontractors (*)
+      )
+    `)
+    .eq('project_id', projectId)
+    .in('bid_round_id', activeRoundIds)
+    .order('item_number')
+
+  if (error) throw error
+  return data || []
+}
+
+// Delete all bid items for a project (cleanup orphans)
+export async function deleteAllProjectBidItems(projectId) {
+  const { error } = await supabase
+    .from('bid_items')
+    .delete()
+    .eq('project_id', projectId)
+
+  if (error) throw error
 }
 
 export async function createProject(project) {
