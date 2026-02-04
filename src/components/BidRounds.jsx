@@ -526,6 +526,43 @@ export default function BidRounds({ projectId, projectName }) {
     }
   }
 
+  // Delete ALL bid items for the entire project (cleanup orphans and reset)
+  async function clearAllProjectBidItems() {
+    // Get total count first
+    const { count } = await supabase
+      .from('bid_items')
+      .select('*', { count: 'exact', head: true })
+      .eq('project_id', projectId)
+
+    if (!count || count === 0) {
+      toast('No bid items to delete')
+      return
+    }
+
+    if (!confirm(`Are you sure you want to delete ALL ${count} bid items for this project?\n\nThis will remove all bid items from ALL rounds and any orphaned items.\n\nThis action cannot be undone.`)) {
+      return
+    }
+
+    try {
+      toast.loading(`Deleting ${count} bid items...`, { id: 'clear-all-project' })
+
+      const { error } = await supabase
+        .from('bid_items')
+        .delete()
+        .eq('project_id', projectId)
+
+      if (error) throw error
+
+      toast.dismiss('clear-all-project')
+      toast.success(`Deleted all ${count} bid items`)
+      loadRounds()
+    } catch (error) {
+      toast.dismiss('clear-all-project')
+      console.error('Error clearing all bid items:', error)
+      toast.error('Failed to clear bid items')
+    }
+  }
+
   // Maximum file size for direct function upload (smaller files go directly to function)
   const MAX_DIRECT_UPLOAD_SIZE = 800 * 1024 // 800KB - stay under Netlify's 1MB limit with some buffer
 
@@ -932,6 +969,14 @@ export default function BidRounds({ projectId, projectName }) {
             <h2 className="text-lg font-semibold">Bid Rounds</h2>
             <span className="text-sm text-gray-500">({rounds.length} rounds)</span>
           </div>
+          <button
+            onClick={clearAllProjectBidItems}
+            className="flex items-center gap-1 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 rounded border border-red-200"
+            title="Delete all bid items for this project"
+          >
+            <Trash2 className="w-4 h-4" />
+            Clear All Items
+          </button>
           <button
             onClick={() => setShowNewRoundModal(true)}
             className="flex items-center gap-1 px-3 py-1.5 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700"

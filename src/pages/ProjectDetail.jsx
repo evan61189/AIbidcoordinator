@@ -5,7 +5,7 @@ import {
   Calendar, MapPin, Building2, Download, ChevronDown, ChevronRight, Trash2,
   Search, Mail, Check, X
 } from 'lucide-react'
-import { fetchProject, fetchTrades, createBidItem, fetchSubcontractors, createBid, supabase, fetchScopePackages } from '../lib/supabase'
+import { fetchProject, fetchTrades, createBidItem, fetchSubcontractors, createBid, supabase, fetchScopePackages, fetchProjectBidItems, deleteAllProjectBidItems } from '../lib/supabase'
 import { BID_PACKAGE_TYPES, getPackageType, isManualEntryPackage } from '../lib/packageTypes'
 import BidLeveling from '../components/BidLeveling'
 import BidRounds from '../components/BidRounds'
@@ -17,6 +17,7 @@ import toast from 'react-hot-toast'
 export default function ProjectDetail() {
   const { id } = useParams()
   const [project, setProject] = useState(null)
+  const [bidItems, setBidItems] = useState([])
   const [trades, setTrades] = useState([])
   const [loading, setLoading] = useState(true)
   const [expandedTrades, setExpandedTrades] = useState({})
@@ -36,9 +37,13 @@ export default function ProjectDetail() {
       const data = await fetchProject(id)
       setProject(data)
 
+      // Load bid items separately (only from active rounds)
+      const items = await fetchProjectBidItems(id)
+      setBidItems(items || [])
+
       // Auto-expand trades with bid items
       const expanded = {}
-      data?.bid_items?.forEach(item => {
+      items?.forEach(item => {
         if (item.trade) {
           expanded[item.trade.id] = true
         }
@@ -49,6 +54,23 @@ export default function ProjectDetail() {
       toast.error('Failed to load project')
     } finally {
       setLoading(false)
+    }
+  }
+
+  // Clear all bid items for this project (cleanup orphans)
+  async function clearAllBidItems() {
+    if (!window.confirm('Are you sure you want to delete ALL bid items for this project?\n\nThis will remove all bid items regardless of which round they belong to.\n\nThis action cannot be undone.')) {
+      return
+    }
+
+    try {
+      await deleteAllProjectBidItems(id)
+      setBidItems([])
+      setSelectedItemsForDeletion([])
+      toast.success('All bid items deleted')
+    } catch (error) {
+      console.error('Error clearing bid items:', error)
+      toast.error('Failed to delete bid items')
     }
   }
 
@@ -81,7 +103,7 @@ export default function ProjectDetail() {
 
   // Select all bid items for deletion
   function selectAllItems() {
-    const allIds = project?.bid_items?.map(item => item.id) || []
+    const allIds = bidItems?.map(item => item.id) || []
     setSelectedItemsForDeletion(allIds)
   }
 
@@ -148,7 +170,7 @@ export default function ProjectDetail() {
   }
 
   // Group bid items by trade
-  const bidItemsByTrade = project?.bid_items?.reduce((acc, item) => {
+  const bidItemsByTrade = bidItems?.reduce((acc, item) => {
     const tradeId = item.trade?.id
     if (!acc[tradeId]) {
       acc[tradeId] = {
@@ -288,7 +310,7 @@ export default function ProjectDetail() {
       <ProjectBidViews
         projectId={id}
         project={project}
-        bidItems={project?.bid_items || []}
+        bidItems={bidItems || []}
         onRefresh={loadProject}
         onAddBidItem={() => setShowAddItem(true)}
         onInviteSubs={() => {
@@ -319,7 +341,7 @@ export default function ProjectDetail() {
         <InviteSubsModal
           projectId={id}
           project={project}
-          bidItems={project.bid_items || []}
+          bidItems={bidItems || []}
           subcontractors={subcontractors}
           onClose={() => setShowInviteModal(false)}
           onSuccess={() => {
