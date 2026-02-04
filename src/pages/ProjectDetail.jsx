@@ -791,14 +791,14 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
                   <span className="ml-2 text-gray-500">Loading bid packages...</span>
                 </div>
               ) : scopePackages.length > 0 ? (
-                <>
+                <div className="space-y-4">
                   {scopePackages.map(pkg => {
                     const pkgItems = filterItems(getPackageItems(pkg.id))
                     const isSelected = selectedPackages.includes(pkg.id)
                     return (
-                      <div key={pkg.id} className="mb-3">
-                        <label className={`flex items-center gap-2 p-3 rounded-lg cursor-pointer border ${
-                          isSelected ? 'border-primary-300 bg-primary-50' : 'border-gray-200 hover:bg-gray-50'
+                      <div key={pkg.id} className={`border rounded-lg overflow-hidden ${isSelected ? 'border-primary-300' : 'border-gray-200'}`}>
+                        <label className={`flex items-center gap-3 p-3 cursor-pointer ${
+                          isSelected ? 'bg-primary-50' : 'bg-gray-50 hover:bg-gray-100'
                         }`}>
                           <input
                             type="checkbox"
@@ -812,51 +812,55 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
                             }}
                             className="rounded border-gray-300"
                           />
-                          <div className="flex-1">
-                            <span className="font-semibold text-gray-900">{pkg.name}</span>
-                            <span className="text-sm text-gray-500 ml-2">({pkgItems.length} items)</span>
-                            {pkgItems.length > 0 && (
-                              <ul className="mt-2 ml-4 text-sm text-gray-600 space-y-0.5">
-                                {pkgItems.slice(0, 8).map(item => (
-                                  <li key={item.id} className="list-disc list-inside">
-                                    {item.item_number && <span className="text-gray-400">#{item.item_number} </span>}
-                                    {item.description}
-                                    {item.quantity && <span className="text-gray-400"> ({item.quantity} {item.unit || ''})</span>}
-                                  </li>
-                                ))}
-                                {pkgItems.length > 8 && (
-                                  <li className="text-gray-400 italic list-none ml-4">...and {pkgItems.length - 8} more items</li>
-                                )}
-                              </ul>
-                            )}
-                          </div>
+                          <span className="font-semibold text-gray-900">{pkg.name}</span>
+                          <span className="text-sm text-gray-500">({pkgItems.length} items)</span>
                         </label>
+                        {pkgItems.length > 0 && (
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="bg-gray-50 text-gray-600 text-xs">
+                                <th className="text-left px-3 py-2 w-20">Item #</th>
+                                <th className="text-left px-3 py-2">Description</th>
+                                <th className="text-left px-3 py-2 w-24">Qty</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {pkgItems.map(item => (
+                                <tr key={item.id} className="hover:bg-gray-50">
+                                  <td className="px-3 py-2 text-gray-500">{item.item_number || '-'}</td>
+                                  <td className="px-3 py-2 text-gray-900">{item.description}</td>
+                                  <td className="px-3 py-2 text-gray-500">{item.quantity ? `${item.quantity} ${item.unit || ''}` : '-'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
                       </div>
                     )
                   })}
 
                   {/* Unassigned Items */}
                   {filterItems(unassignedItems).length > 0 && (
-                    <div className="mb-3 p-3 rounded-lg border border-orange-200 bg-orange-50/50">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="font-semibold text-orange-600">Unassigned Items</span>
-                        <span className="text-sm text-gray-500">({filterItems(unassignedItems).length})</span>
+                    <div className="border border-orange-200 rounded-lg overflow-hidden bg-orange-50/30">
+                      <div className="flex items-center gap-2 p-3 bg-orange-100">
+                        <span className="font-semibold text-orange-700">Unassigned Items</span>
+                        <span className="text-sm text-orange-600">({filterItems(unassignedItems).length})</span>
                       </div>
-                      <ul className="ml-4 text-sm text-gray-600 space-y-0.5">
-                        {filterItems(unassignedItems).slice(0, 5).map(item => (
-                          <li key={item.id} className="list-disc list-inside">
-                            {item.item_number && <span className="text-gray-400">#{item.item_number} </span>}
-                            {item.description}
-                          </li>
-                        ))}
-                        {filterItems(unassignedItems).length > 5 && (
-                          <li className="text-gray-400 italic list-none ml-4">...and {filterItems(unassignedItems).length - 5} more</li>
-                        )}
-                      </ul>
-                      <p className="text-xs text-orange-600 mt-2">These items need to be assigned to packages first.</p>
+                      <table className="w-full text-sm">
+                        <tbody className="divide-y divide-orange-100">
+                          {filterItems(unassignedItems).map(item => (
+                            <tr key={item.id} className="hover:bg-orange-50">
+                              <td className="px-3 py-2 text-gray-500 w-20">{item.item_number || '-'}</td>
+                              <td className="px-3 py-2 text-gray-900">{item.description}</td>
+                              <td className="px-3 py-2 text-gray-500 w-24">{item.quantity ? `${item.quantity} ${item.unit || ''}` : '-'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      <p className="text-xs text-orange-600 p-3 border-t border-orange-200">These items need to be assigned to packages first.</p>
                     </div>
                   )}
-                </>
+                </div>
               ) : (
                 <div className="text-center py-8 text-gray-500">
                   <p className="mb-2">No bid packages created yet.</p>
