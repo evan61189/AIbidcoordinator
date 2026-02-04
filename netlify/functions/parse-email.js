@@ -229,7 +229,14 @@ export async function handler(event) {
     // Build context about what packages were invited (if provided)
     const packageContext = invited_packages?.length > 0
       ? `\n\nIMPORTANT CONTEXT: This subcontractor was invited to bid on these SEPARATE packages: ${invited_packages.join(', ')}.
-         Check if they provided a SINGLE lump sum for multiple packages (needs clarification) vs separate pricing per package (acceptable).`
+
+CRITICAL: Look carefully for per-package pricing breakdown. If they list prices like:
+- "Electrical: $50,000" or "Electrical - $50,000"
+- "Fire Alarm: $25,000"
+- "Low Voltage: $15,000"
+Then extract these into amounts_by_package.
+
+If they only give ONE total/lump sum without breaking down by package, then needs_clarification should be true.`
       : ''
 
     // Use Anthropic Claude to parse the email
@@ -239,27 +246,29 @@ export async function handler(event) {
       messages: [
         {
           role: 'user',
-          content: `Parse this contractor bid email and extract the following information. Return ONLY a valid JSON object with these exact fields (use null for missing values):
+          content: `Parse this contractor bid email and extract pricing information. Return ONLY a valid JSON object.
+
+CRITICAL: If the email contains per-package pricing (like "Electrical: $50,000, Fire Alarm: $25,000"), you MUST extract each into amounts_by_package. This is often a response to a clarification request.
 
 {
   "bid_data": {
-    "amount": <number or null - total bid amount without currency symbol>,
-    "amounts_by_package": <object or null - if they broke down by package, e.g. {"Electrical": 50000, "Fire Alarm": 25000}>,
-    "includes": <string or null - what's included in the bid>,
-    "excludes": <string or null - what's excluded from the bid>,
-    "clarifications": <string or null - any notes, assumptions, or clarifications>,
-    "lead_time": <string or null - delivery or lead time>,
-    "valid_until": <string or null - how long the bid is valid>
+    "amount": <number or null - total bid amount>,
+    "amounts_by_package": <object or null - IMPORTANT: extract any per-package pricing, e.g. {"Electrical": 50000, "Fire Alarm": 25000, "Low Voltage": 15000}>,
+    "includes": <string or null>,
+    "excludes": <string or null>,
+    "clarifications": <string or null>,
+    "lead_time": <string or null>,
+    "valid_until": <string or null>
   },
   "sender_info": {
-    "company_name": <string or null - company name>,
-    "contact_name": <string or null - person's name>,
-    "email": <string or null - email address>,
-    "phone": <string or null - phone number>
+    "company_name": <string or null>,
+    "contact_name": <string or null>,
+    "email": <string or null>,
+    "phone": <string or null>
   },
-  "needs_clarification": <boolean - true if they gave a single lump sum for multiple packages without breakdown>,
-  "clarification_reason": <string or null - why clarification is needed>,
-  "confidence": <number 0-1 - your confidence in the extraction accuracy>
+  "needs_clarification": <boolean - true ONLY if they gave a single lump sum for multiple packages WITHOUT any breakdown>,
+  "clarification_reason": <string or null>,
+  "confidence": <number 0-1>
 }
 ${packageContext}
 
@@ -299,6 +308,99 @@ ${email_content.substring(0, 4000)}`
       subcontractor: subcontractor_id ? { id: subcontractor_id } : null,
       project: project_id ? { id: project_id } : null,
       bid_items: []
+    }
+
+    // If we have package breakdown (clarification response), process and save the bids
+    if (parsedData.bid_data?.amounts_by_package && Object.keys(parsedData.bid_data.amounts_by_package).length > 0 && subcontractor_id && project_id) {
+      const supabase = getSupabase()
+      if (supabase) {
+        try {
+          // Mark any pending clarification as resolved
+          await supabase
+            .from('bid_clarifications')
+            .update({
+              status: 'resolved',
+              responded_at: new Date().toISOString(),
+              package_amounts: parsedData.bid_data.amounts_by_package
+            })
+            .eq('project_id', project_id)
+            .eq('subcontractor_id', subcontractor_id)
+            .eq('status', 'pending')
+
+          // Get scope packages for this project to match package names to bid items
+          const { data: scopePackages } = await supabase
+            .from('scope_packages')
+            .select(`
+              id, name,
+              items:scope_package_items(bid_item_id)
+            `)
+            .eq('project_id', project_id)
+
+          // Create/update bids for each package amount
+          const createdBids = []
+          for (const [packageName, amount] of Object.entries(parsedData.bid_data.amounts_by_package)) {
+            // Find matching scope package (case-insensitive)
+            const matchingPackage = scopePackages?.find(pkg =>
+              pkg.name?.toLowerCase() === packageName.toLowerCase() ||
+              pkg.name?.toLowerCase().includes(packageName.toLowerCase()) ||
+              packageName.toLowerCase().includes(pkg.name?.toLowerCase())
+            )
+
+            if (matchingPackage && matchingPackage.items?.length > 0) {
+              // Create a bid for the first bid_item in this package (package-level bid)
+              const bidItemId = matchingPackage.items[0].bid_item_id
+
+              // Check if bid already exists
+              const { data: existingBid } = await supabase
+                .from('bids')
+                .select('id')
+                .eq('bid_item_id', bidItemId)
+                .eq('subcontractor_id', subcontractor_id)
+                .single()
+
+              if (existingBid) {
+                // Update existing bid
+                await supabase
+                  .from('bids')
+                  .update({
+                    amount: amount,
+                    status: 'submitted',
+                    submitted_at: new Date().toISOString(),
+                    notes: `Package bid for ${packageName} (from clarification response)`
+                  })
+                  .eq('id', existingBid.id)
+
+                createdBids.push({ package: packageName, amount, action: 'updated', bid_item_id: bidItemId })
+              } else {
+                // Create new bid
+                await supabase
+                  .from('bids')
+                  .insert({
+                    bid_item_id: bidItemId,
+                    subcontractor_id: subcontractor_id,
+                    amount: amount,
+                    status: 'submitted',
+                    submitted_at: new Date().toISOString(),
+                    notes: `Package bid for ${packageName} (from clarification response)`
+                  })
+
+                createdBids.push({ package: packageName, amount, action: 'created', bid_item_id: bidItemId })
+              }
+            } else {
+              createdBids.push({ package: packageName, amount, action: 'no_match', error: 'Could not find matching scope package' })
+            }
+          }
+
+          parsedData.clarification_response_processed = true
+          parsedData.bids_created = createdBids
+          parsedData.needs_clarification = false // They provided the breakdown
+
+          console.log(`Processed clarification response: ${createdBids.length} packages`)
+        } catch (e) {
+          console.error('Error processing clarification response:', e)
+          parsedData.clarification_response_error = e.message
+        }
+      }
     }
 
     // If clarification needed, fetch subcontractor/project info and auto-send clarification email
