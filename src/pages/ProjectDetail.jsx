@@ -6,7 +6,7 @@ import {
   Search, Mail, Check, X
 } from 'lucide-react'
 import { fetchProject, fetchTrades, createBidItem, fetchSubcontractors, createBid, supabase, fetchScopePackages } from '../lib/supabase'
-import { BID_PACKAGE_TYPES, getPackageType } from '../lib/packageTypes'
+import { BID_PACKAGE_TYPES, getPackageType, isManualEntryPackage } from '../lib/packageTypes'
 import BidLeveling from '../components/BidLeveling'
 import BidRounds from '../components/BidRounds'
 import ProjectBidViews from '../components/ProjectBidViews'
@@ -611,9 +611,11 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
       .map(pkgId => scopePackages.find(p => p.id === pkgId)?.name)
       .map(normalizeToPackageTypeId)
       .filter(Boolean)
+      .filter(id => !isManualEntryPackage(id)) // Exclude manual entry packages (e.g., General Requirements)
   )]
 
   // Get relevant subcontractors based on their package_types matching selected packages
+  // (Manual entry packages like General Requirements won't match any subs)
   const relevantSubs = subcontractors.filter(sub =>
     sub.package_types?.some(pt => selectedPackageTypeIds.includes(pt))
   )
