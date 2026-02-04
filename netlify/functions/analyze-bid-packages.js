@@ -1,4 +1,9 @@
-const Anthropic = require('@anthropic-ai/sdk').default
+let Anthropic
+try {
+  Anthropic = require('@anthropic-ai/sdk').default
+} catch (e) {
+  console.error('Failed to load Anthropic SDK:', e)
+}
 
 /**
  * AI-powered bid package analysis
@@ -40,19 +45,23 @@ exports.handler = async (event) => {
     'Access-Control-Allow-Origin': '*'
   }
 
-  if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 200, headers, body: '' }
-  }
-
-  if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, headers, body: JSON.stringify({ error: 'Method not allowed' }) }
-  }
-
   try {
+    if (event.httpMethod === 'OPTIONS') {
+      return { statusCode: 200, headers, body: '{}' }
+    }
+
+    if (event.httpMethod !== 'POST') {
+      return { statusCode: 405, headers, body: JSON.stringify({ error: 'Method not allowed' }) }
+    }
+
     const { bidItems } = JSON.parse(event.body || '{}')
 
     if (!bidItems?.length) {
       return { statusCode: 400, headers, body: JSON.stringify({ error: 'No bid items provided' }) }
+    }
+
+    if (!Anthropic) {
+      return { statusCode: 500, headers, body: JSON.stringify({ error: 'Anthropic SDK failed to load' }) }
     }
 
     if (!process.env.ANTHROPIC_API_KEY) {
@@ -81,7 +90,7 @@ Return JSON only: {"packages":[{"name":"Name","bidItemIds":["id1","id2"]}]}`
     const match = text.match(/\{[\s\S]*\}/)
 
     if (!match) {
-      return { statusCode: 500, headers, body: JSON.stringify({ error: 'Invalid AI response' }) }
+      return { statusCode: 500, headers, body: JSON.stringify({ error: 'Invalid AI response', raw: text.substring(0, 200) }) }
     }
 
     const analysis = JSON.parse(match[0])
