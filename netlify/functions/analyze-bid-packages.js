@@ -303,9 +303,8 @@ Return ONLY valid JSON in this exact format:
 
     let response
     try {
-      // Use Claude 3 Sonnet for reliable responses
       response = await anthropic.messages.create({
-        model: 'claude-3-sonnet-20240229',
+        model: 'claude-sonnet-4-20250514',
         max_tokens: 4096,
         messages: [{ role: 'user', content: prompt }]
       })
