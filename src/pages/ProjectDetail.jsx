@@ -10,6 +10,7 @@ import { BID_PACKAGE_TYPES, getPackageType, isManualEntryPackage } from '../lib/
 import BidLeveling from '../components/BidLeveling'
 import BidRounds from '../components/BidRounds'
 import ProjectBidViews from '../components/ProjectBidViews'
+import ProjectChat from '../components/ProjectChat'
 import { format } from 'date-fns'
 import toast from 'react-hot-toast'
 
@@ -327,6 +328,13 @@ export default function ProjectDetail() {
           }}
         />
       )}
+
+      {/* AI Chat Assistant */}
+      <ProjectChat
+        projectId={id}
+        projectName={project?.name}
+        onRefresh={loadProject}
+      />
     </div>
   )
 }
