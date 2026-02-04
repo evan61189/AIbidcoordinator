@@ -35,23 +35,29 @@ GROUP BID ITEMS BY THESE SUBCONTRACTOR PACKAGES:
 === INTERIORS ===
 13. DRYWALL/ACOUSTICAL: metal studs, drywall, WALL INSULATION ONLY, ACT ceilings, acoustical, firestopping
 14. DOORS/HARDWARE: doors, frames, hardware, access doors
-15. MILLWORK/CASEWORK: custom cabinets, built-ins, countertops, architectural woodwork, millwork
+15. MILLWORK/CASEWORK: custom cabinets, built-ins, countertops, architectural woodwork, millwork (NOT lab casework)
 16. PAINTING: paint, stain, wall coverings, coatings
 17. FLOORING: carpet, VCT, LVT, rubber, tile, wood, epoxy, base
 18. WINDOW TREATMENTS: blinds, shades, curtains, interior sun control
-19. SPECIALTIES: toilet partitions, accessories, lockers, signage
+
+=== SPECIALTIES (bid separately) ===
+19. SIGNAGE: interior signage, exterior signage, wayfinding, ADA signs, room signs, directories
+20. BATHROOM ACCESSORIES/PARTITIONS: toilet partitions, grab bars, mirrors, soap dispensers, paper towel dispensers, bathroom accessories
+21. FIRE EXTINGUISHERS/CABINETS: fire extinguishers, fire extinguisher cabinets, mounting brackets
+22. SPECIALTIES: lockers, corner guards, wall protection, misc specialties (NOT signage, NOT bathroom, NOT fire ext)
 
 === EQUIPMENT ===
-20. EQUIPMENT: appliances, kitchen equipment, food service equipment, laundry equipment
-21. CONVEYING: elevators, lifts, escalators, dumbwaiters
+23. LABORATORY CASEWORK/EQUIPMENT: lab casework, fume hoods, lab benches, lab sinks, lab equipment, lab fixtures (SEPARATE from regular millwork)
+24. EQUIPMENT: appliances, kitchen equipment, food service equipment, laundry equipment
+25. CONVEYING: elevators, lifts, escalators, dumbwaiters
 
 === MEP (Mechanical/Electrical/Plumbing) ===
-22. PLUMBING: fixtures, piping, water heaters, gas, PLUMBING PIPE INSULATION
-23. HVAC: equipment, ductwork, controls, TAB, DUCT INSULATION, HVAC PIPE INSULATION
-24. ELECTRICAL: power, wiring, lighting, panels (NOT low voltage, NOT fire alarm)
-25. LOW VOLTAGE: data/voice cabling, AV, security rough-in (SEPARATE from electrical)
-26. FIRE ALARM: alarm panels, detectors, notification devices (SEPARATE from electrical & sprinklers)
-27. FIRE PROTECTION: sprinklers, standpipes, fire pump (SEPARATE from fire alarm)
+26. PLUMBING: fixtures, piping, water heaters, gas, PLUMBING PIPE INSULATION
+27. HVAC: equipment, ductwork, controls, TAB, DUCT INSULATION, HVAC PIPE INSULATION
+28. ELECTRICAL: power, wiring, lighting, panels (NOT low voltage, NOT fire alarm)
+29. LOW VOLTAGE: data/voice cabling, AV, security rough-in (SEPARATE from electrical)
+30. FIRE ALARM: alarm panels, detectors, notification devices (SEPARATE from electrical & sprinklers)
+31. FIRE PROTECTION: sprinklers, standpipes, fire pump (SEPARATE from fire alarm)
 
 === INSULATION RULES (CRITICAL) ===
 - Wall insulation, batt insulation, building insulation → DRYWALL/ACOUSTICAL (drywall sub handles)
