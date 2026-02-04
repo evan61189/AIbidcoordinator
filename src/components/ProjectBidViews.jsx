@@ -245,6 +245,28 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
     }
   }
 
+  async function handleDeleteAllPackages() {
+    if (scopePackages.length === 0) {
+      toast.error('No packages to delete')
+      return
+    }
+    if (!confirm(`Delete all ${scopePackages.length} bid packages? This will allow you to re-run AI Auto-Generate cleanly.`)) return
+
+    try {
+      let deleted = 0
+      for (const pkg of scopePackages) {
+        await deleteScopePackage(pkg.id)
+        deleted++
+      }
+      toast.success(`Deleted ${deleted} packages`)
+      loadData()
+    } catch (error) {
+      console.error('Error deleting packages:', error)
+      toast.error('Failed to delete some packages')
+      loadData() // Refresh to show remaining packages
+    }
+  }
+
   // ==================== DIVISION VIEW HELPERS ====================
   function groupByDivision(includeMarkup = false) {
     const groups = {}
@@ -536,12 +558,22 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
             <p className="text-sm text-gray-600">
               Group bid items by how subcontractors typically bid work together.
             </p>
-            <button
-              onClick={() => setShowCreatePackage(true)}
-              className="flex items-center gap-1 px-3 py-1.5 text-sm bg-purple-600 text-white hover:bg-purple-700 rounded"
-            >
-              <Plus className="w-4 h-4" /> New Package
-            </button>
+            <div className="flex gap-2">
+              {scopePackages.length > 0 && (
+                <button
+                  onClick={handleDeleteAllPackages}
+                  className="flex items-center gap-1 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 border border-red-200 rounded"
+                >
+                  <Trash2 className="w-4 h-4" /> Delete All
+                </button>
+              )}
+              <button
+                onClick={() => setShowCreatePackage(true)}
+                className="flex items-center gap-1 px-3 py-1.5 text-sm bg-purple-600 text-white hover:bg-purple-700 rounded"
+              >
+                <Plus className="w-4 h-4" /> New Package
+              </button>
+            </div>
           </div>
 
           {scopePackages.length === 0 ? (
