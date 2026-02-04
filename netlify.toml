@@ -37,6 +37,7 @@
 [functions."process-bid-response"]
   external_node_modules = ["@anthropic-ai/sdk", "busboy"]
 
-# AI-powered bid package analysis
+# AI-powered bid package analysis (needs longer timeout for AI calls)
 [functions."analyze-bid-packages"]
   external_node_modules = ["@anthropic-ai/sdk"]
+  timeout = 26
