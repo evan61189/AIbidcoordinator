@@ -6,58 +6,45 @@ const anthropic = new Anthropic()
  * AI-powered bid package analysis
  * Uses construction industry knowledge to suggest how bid items should be grouped
  * for subcontractor invitations BEFORE bids are received.
- *
- * Common subcontractor groupings in commercial construction:
- * - Drywall Sub: Metal framing, wall insulation, drywall, acoustical ceilings, acoustical sealants
- * - Electrical Sub: Power distribution, lighting, low voltage, fire alarm (sometimes separate)
- * - Plumbing Sub: Plumbing fixtures, piping, sometimes med gas
- * - HVAC Sub: Heating, ventilation, AC, controls, ductwork insulation
- * - Concrete Sub: Foundations, slabs, tilt-up, precast
- * - Roofing Sub: Roofing, flashing, sometimes waterproofing
- * - Glazing Sub: Windows, storefronts, curtain wall, skylights
- * - Painting Sub: Painting, wall coverings, specialty coatings
- * - Flooring Sub: Carpet, VCT, tile, wood flooring, polished concrete
- * - Fire Protection Sub: Sprinklers, standpipes (often separate from electrical fire alarm)
  */
 
 const INDUSTRY_KNOWLEDGE = `
 COMMON SUBCONTRACTOR TRADE GROUPINGS IN COMMERCIAL CONSTRUCTION:
 
-1. DRYWALL/INTERIOR SYSTEMS SUBCONTRACTOR
-   - Metal stud framing (light gauge steel framing)
-   - Drywall/gypsum board
-   - Wall insulation (batt insulation in wall cavities)
-   - Acoustical ceilings (suspended ceiling systems, ACT)
-   - Acoustical ceiling framing/grid
-   - Acoustical sealants and firestopping
-   - Shaft wall systems
-   - Sometimes includes: FRP panels, wall protection
+1. DEMOLITION SUBCONTRACTOR
+   - Selective demolition
+   - Structural demolition
+   - Interior demolition
+   - Hazmat abatement (asbestos, lead - sometimes separate specialty)
+   - Concrete sawing/removal
+   - Site clearing
+   - Note: Often first trade on site, may include rubbish removal
 
-2. ELECTRICAL SUBCONTRACTOR
-   - Power distribution and wiring
-   - Lighting fixtures and controls
-   - Low voltage systems (data/voice cabling)
-   - Fire alarm systems (detection, notification - NOT sprinklers)
-   - Security rough-in
-   - Sometimes separate: Low voltage/data (specialty sub)
-   - Sometimes separate: Fire alarm (specialty sub)
+2. SITEWORK/EARTHWORK SUBCONTRACTOR
+   - Excavation
+   - Grading
+   - Soil compaction
+   - Underground utilities (storm, sanitary, water, gas)
+   - Erosion control
+   - Dewatering
+   - Import/export of fill
+   - Retaining walls (sometimes)
+   - Note: SEPARATE from paving and landscaping
 
-3. PLUMBING SUBCONTRACTOR
-   - Plumbing fixtures (toilets, sinks, etc.)
-   - Domestic water piping
-   - Sanitary/waste piping
-   - Storm drainage
-   - Gas piping
-   - Sometimes includes: Medical gas systems
+3. LANDSCAPING SUBCONTRACTOR
+   - Planting (trees, shrubs, groundcover)
+   - Irrigation systems
+   - Sod/seeding
+   - Mulch and landscape materials
+   - Landscape maintenance (if included)
+   - Sometimes includes: Site furnishings, pavers
 
-4. HVAC/MECHANICAL SUBCONTRACTOR
-   - HVAC equipment (RTUs, split systems, chillers)
-   - Ductwork
-   - Duct insulation
-   - Controls/BAS
-   - Piping (hydronic)
-   - Testing and balancing
-   - Sometimes includes: Kitchen exhaust hoods
+4. PAVING SUBCONTRACTOR
+   - Asphalt paving
+   - Concrete paving (parking lots, drives)
+   - Striping and marking
+   - Curbs and gutters (sometimes with concrete sub)
+   - Speed bumps, signage bases
 
 5. CONCRETE SUBCONTRACTOR
    - Foundations
@@ -65,78 +52,191 @@ COMMON SUBCONTRACTOR TRADE GROUPINGS IN COMMERCIAL CONSTRUCTION:
    - Elevated slabs
    - Tilt-up panels
    - Site concrete (sidewalks, curbs)
+   - Concrete polishing/finishing
    - Reinforcing steel (sometimes separate)
 
-6. STRUCTURAL STEEL/METALS SUBCONTRACTOR
+6. MASONRY SUBCONTRACTOR
+   - CMU (concrete masonry units)
+   - Brick veneer
+   - Stone veneer
+   - Structural brick
+   - Glass block
+   - Sometimes includes: Stone pavers, rough stone
+
+7. STRUCTURAL STEEL/METALS SUBCONTRACTOR
    - Structural steel
    - Metal decking
-   - Miscellaneous metals (stairs, railings, ladders)
-   - Ornamental metals (sometimes separate)
+   - Miscellaneous metals (stairs, railings, ladders, bollards)
+   - Steel joists
+   - Ornamental metals (sometimes separate specialty)
 
-7. ROOFING SUBCONTRACTOR
-   - Roofing membrane/system
-   - Roof insulation
-   - Flashings
-   - Sheet metal (gutters, downspouts)
-   - Sometimes includes: Waterproofing, air barriers
+8. ROUGH CARPENTRY/FRAMING SUBCONTRACTOR
+   - Wood framing (if applicable)
+   - Blocking and backing
+   - Rough hardware
+   - Sheathing
+   - Note: On commercial, often part of drywall sub scope
 
-8. GLAZING SUBCONTRACTOR
-   - Windows
-   - Storefronts
-   - Curtain wall
-   - Skylights
-   - Glass and glazing
-   - Entrance doors (aluminum)
+9. DRYWALL/INTERIOR SYSTEMS SUBCONTRACTOR
+   - Metal stud framing (light gauge steel framing)
+   - Drywall/gypsum board
+   - Wall insulation (batt insulation in wall cavities)
+   - Acoustical ceilings (suspended ceiling systems, ACT)
+   - Acoustical ceiling framing/grid
+   - Acoustical sealants and firestopping
+   - Shaft wall systems
+   - Drywall finishing/taping
+   - Sometimes includes: FRP panels, wall protection, sound batts
 
-9. PAINTING SUBCONTRACTOR
-   - Interior painting
-   - Exterior painting
-   - Staining
-   - Wall coverings
-   - Specialty coatings
-   - Sometimes includes: Caulking/sealants
+10. ROOFING SUBCONTRACTOR
+    - Roofing membrane/system (TPO, EPDM, built-up, metal)
+    - Roof insulation
+    - Flashings
+    - Sheet metal (gutters, downspouts, copings)
+    - Roof accessories (hatches, vents, curbs)
+    - Sometimes includes: Waterproofing, air barriers, vapor barriers
 
-10. FLOORING SUBCONTRACTOR
-    - Carpet
-    - VCT (vinyl composition tile)
-    - LVT (luxury vinyl tile)
-    - Ceramic/porcelain tile
-    - Wood flooring
-    - Polished concrete
-    - Epoxy flooring
-    - Rubber/resilient flooring
+11. WATERPROOFING/BUILDING ENVELOPE SUBCONTRACTOR
+    - Below-grade waterproofing
+    - Air barriers
+    - Vapor barriers
+    - Joint sealants (exterior)
+    - Dampproofing
+    - Note: Sometimes combined with roofing
 
-11. FIRE PROTECTION/SPRINKLER SUBCONTRACTOR
-    - Fire sprinkler systems
-    - Standpipes
-    - Fire pumps
-    - Note: SEPARATE from fire alarm (electrical)
+12. GLAZING SUBCONTRACTOR
+    - Windows (aluminum, vinyl)
+    - Storefronts
+    - Curtain wall
+    - Skylights
+    - Glass and glazing
+    - Aluminum entrance doors
+    - Note: Glass railings sometimes separate
 
-12. MASONRY SUBCONTRACTOR
-    - CMU (concrete masonry units)
-    - Brick veneer
-    - Stone veneer
-    - Sometimes includes: Rough stone, pavers
-
-13. SITEWORK/EARTHWORK SUBCONTRACTOR
-    - Excavation
-    - Grading
-    - Utilities (underground)
-    - Paving (asphalt, concrete)
-    - Landscaping (sometimes separate)
-
-14. DOORS/FRAMES/HARDWARE SUBCONTRACTOR
+13. DOORS/FRAMES/HARDWARE SUBCONTRACTOR
     - Hollow metal frames
     - Wood doors
-    - Hardware (hinges, locksets, closers)
-    - Specialty doors (sometimes separate)
+    - Hollow metal doors
+    - Finish hardware (hinges, locksets, closers, stops)
+    - Access doors
+    - Specialty doors (sometimes separate): overhead, rolling, fire-rated
 
-15. SPECIALTIES (often separate small packages)
-    - Toilet accessories
-    - Signage
-    - Fire extinguishers/cabinets
+14. PAINTING SUBCONTRACTOR
+    - Interior painting
+    - Exterior painting
+    - Staining and sealing
+    - Wall coverings (wallpaper, vinyl)
+    - Specialty coatings (epoxy, intumescent)
+    - Sometimes includes: Caulking/sealants (interior)
+
+15. FLOORING SUBCONTRACTOR
+    - Carpet
+    - VCT (vinyl composition tile)
+    - LVT/LVP (luxury vinyl)
+    - Rubber flooring
+    - Ceramic/porcelain tile
+    - Quarry tile
+    - Wood flooring
+    - Polished concrete (sometimes with concrete sub)
+    - Epoxy flooring (sometimes specialty)
+    - Base (rubber, vinyl, wood)
+
+16. TILE SUBCONTRACTOR (sometimes separate from flooring)
+    - Ceramic tile
+    - Porcelain tile
+    - Natural stone tile
+    - Glass tile
+    - Tile backer board
+    - Waterproofing for wet areas
+    - Note: Often separate for complex tile work
+
+17. ELECTRICAL SUBCONTRACTOR
+    - Power distribution (panels, transformers, switchgear)
+    - Branch wiring and devices (outlets, switches)
+    - Lighting fixtures
+    - Lighting controls (dimmers, occupancy sensors)
+    - Motor connections
+    - Temporary power
+    - Note: LOW VOLTAGE and FIRE ALARM are often SEPARATE packages
+
+18. LOW VOLTAGE SUBCONTRACTOR
+    - Data cabling (Cat6, fiber)
+    - Voice cabling
+    - Audio/visual rough-in
+    - Security system rough-in (cameras, card readers)
+    - Paging/intercom systems
+    - Wireless access points
+    - Cable tray and pathways
+    - Note: Often bid SEPARATE from electrical power
+
+19. FIRE ALARM SUBCONTRACTOR
+    - Fire alarm control panels
+    - Smoke detectors
+    - Heat detectors
+    - Pull stations
+    - Notification devices (horns, strobes)
+    - Duct detectors
+    - Monitoring connections
+    - Note: SEPARATE from fire sprinklers, often SEPARATE from electrical
+
+20. PLUMBING SUBCONTRACTOR
+    - Plumbing fixtures (toilets, sinks, urinals)
+    - Domestic water piping
+    - Sanitary/waste piping
+    - Storm drainage (interior)
+    - Gas piping
+    - Water heaters
+    - Roof drains
+    - Sometimes includes: Medical gas systems
+
+21. HVAC/MECHANICAL SUBCONTRACTOR
+    - HVAC equipment (RTUs, AHUs, split systems, VRF)
+    - Ductwork and fittings
+    - Duct insulation
+    - Grilles, registers, diffusers
+    - Controls/BAS (building automation)
+    - Piping (hydronic, refrigerant)
+    - Testing and balancing
+    - Exhaust systems
+    - Sometimes includes: Kitchen exhaust hoods, lab exhaust
+
+22. FIRE PROTECTION/SPRINKLER SUBCONTRACTOR
+    - Fire sprinkler systems (wet, dry, preaction)
+    - Standpipes
+    - Fire pumps
+    - Backflow preventers
+    - Fire department connections
+    - Note: SEPARATE from fire alarm
+
+23. INSULATION SUBCONTRACTOR (sometimes separate)
+    - Mechanical insulation (pipe, duct, equipment)
+    - Building insulation (spray foam, rigid)
+    - Firestopping (sometimes with drywall)
+    - Note: Often split between drywall (wall batts) and mechanical (pipe/duct)
+
+24. SPECIALTIES SUBCONTRACTOR
+    - Toilet partitions and accessories
     - Lockers
+    - Fire extinguishers and cabinets
+    - Signage (sometimes separate)
     - Corner guards/wall protection
+    - Projection screens
+    - Flagpoles
+    - Note: Often multiple small packages
+
+25. EQUIPMENT SUBCONTRACTOR (various)
+    - Food service equipment
+    - Laboratory equipment
+    - Medical equipment
+    - Detention equipment
+    - Athletic equipment
+    - Note: Usually specialty subs for each type
+
+26. ELEVATOR/CONVEYING SUBCONTRACTOR
+    - Elevators (hydraulic, traction)
+    - Escalators
+    - Dumbwaiters
+    - Lifts
 `
 
 exports.handler = async (event) => {
@@ -197,12 +297,17 @@ BID ITEMS TO ANALYZE:
 ${JSON.stringify(bidItemDescriptions, null, 2)}
 ${bidPatternContext}
 
-INSTRUCTIONS:
+CRITICAL INSTRUCTIONS:
 1. Group bid items based on which subcontractor trade would typically bid them together
-2. Use the industry knowledge above - a "Drywall Sub" typically includes metal framing, insulation, drywall, AND acoustical ceilings
-3. Create packages named after the subcontractor type (e.g., "Drywall Package", "Electrical Package")
-4. Items that don't fit common groupings can remain ungrouped or be in small specialty packages
-5. Consider local market norms - some items could go either way (e.g., low voltage might be with electrical or separate)
+2. IMPORTANT: Keep these as SEPARATE packages (not combined):
+   - ELECTRICAL (power, lighting) - separate package
+   - LOW VOLTAGE (data, voice, AV, security rough-in) - separate package
+   - FIRE ALARM (detection, notification) - separate package
+   - FIRE PROTECTION/SPRINKLERS - separate package
+3. A "Drywall Sub" typically includes metal framing, insulation, drywall, AND acoustical ceilings
+4. Keep DEMOLITION as its own package
+5. Keep SITEWORK separate from LANDSCAPING separate from PAVING
+6. Items that don't fit common groupings can remain ungrouped or be in small specialty packages
 
 IMPORTANT: Return ONLY valid JSON in this exact format, no other text:
 {
@@ -212,7 +317,8 @@ IMPORTANT: Return ONLY valid JSON in this exact format, no other text:
       "subcontractorType": "Drywall/Interior Systems Subcontractor",
       "description": "Interior wall and ceiling systems",
       "bidItemIds": ["uuid1", "uuid2", "uuid3"],
-      "reasoning": "Metal framing, drywall, insulation, and acoustical ceilings are typically bid together by drywall contractors"
+      "reasoning": "Metal framing, drywall, insulation, and acoustical ceilings are typically bid together by drywall contractors",
+      "relatedPackages": ["Painting Package", "Flooring Package"]
     }
   ],
   "ungroupedItems": ["uuid-for-specialty-item"],
@@ -226,6 +332,8 @@ IMPORTANT: Return ONLY valid JSON in this exact format, no other text:
   ],
   "notes": "Any special considerations or alternative grouping suggestions"
 }
+
+The "relatedPackages" field should list other packages that the same subcontractor MIGHT also bid (e.g., an electrician might bid Electrical AND Low Voltage AND Fire Alarm).
 
 Focus on creating packages that match how subcontractors actually bid work, not just CSI division groupings.`
 
