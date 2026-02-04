@@ -270,22 +270,40 @@ Look for:
     text: `Based on the email body and any attachments above, extract the bid/quote information.
 ${packageInstructions}
 
+CRITICAL - DISTINGUISHING LUMP SUM vs LINE ITEM BIDS:
+
+A "LUMP SUM" bid is when:
+- There is ONE total price for all work
+- Scope items may be LISTED but do NOT have individual prices
+- Example: "Total: $150,000" with a list of included work items (no prices per item)
+- The scope list describes WHAT is included, not how the price breaks down
+
+A "LINE ITEM" bid is when:
+- EACH item has its OWN individual price
+- Prices add up to a total
+- Example: "Conduit: $20,000, Wiring: $50,000, Panels: $30,000, Total: $100,000"
+
+IMPORTANT: If you see a list of scope items WITHOUT individual prices next to each item,
+this is a LUMP SUM bid. Put those items in "scope_included" as text, NOT in "line_items".
+Only populate "line_items" when items have their own dollar amounts.
+
 Return JSON only:
 {
   "total_amount": number or null,
+  "is_lump_sum": true if single price covers all work (even if scope items are listed without prices), false if individually priced line items,
   "amounts_by_package": ${packageNames.length > 1 ? `{ "${packageNames.join('": number, "')}" : number } or null if only lump sum provided` : 'null'},
-  "is_lump_sum_for_multiple": ${packageNames.length > 1 ? 'true if single lump sum covers multiple packages without breakdown, false if breakdown provided' : 'false'},
+  "is_lump_sum_for_multiple": ${packageNames.length > 1 ? 'true if single lump sum covers multiple packages without per-package breakdown, false if breakdown provided' : 'false'},
   "line_items": [
     {
       "description": "Item description",
       "quantity": "Qty or null",
       "unit": "Unit or null",
       "unit_price": number or null,
-      "total": number or null,
+      "total": number (REQUIRED - only include items that have their own price),
       "trade": "Trade/division name"
     }
   ],
-  "scope_included": "What is included in the bid",
+  "scope_included": "Bullet list or description of all work/items included in the bid (especially for lump sum bids where items are listed without individual prices)",
   "scope_excluded": "What is explicitly excluded",
   "clarifications": "Any clarifications, assumptions, or conditions",
   "alternates": [
@@ -300,7 +318,7 @@ Return JSON only:
   "valid_until": "Quote validity date if mentioned (YYYY-MM-DD)",
   "warranty_info": "Warranty information if mentioned",
   "confidence_score": 0.0 to 1.0,
-  "analysis_notes": "Any important notes about the extraction"
+  "analysis_notes": "Note whether this is a lump sum or itemized bid, and any important observations"
 }`
   })
 
@@ -311,6 +329,14 @@ Return JSON only:
     model: CLAUDE_MODEL,
     max_tokens: 4096,
     system: `You are an expert construction bid analyst. Extract pricing and scope information from subcontractor bid responses.
+
+CRITICAL DISTINCTION - Lump Sum vs Line Items:
+- LUMP SUM: One total price with a list of included scope/work items (items have NO individual prices)
+- LINE ITEMS: Each item has its OWN dollar amount that adds up to the total
+
+Many contractors list what's included in their bid WITHOUT pricing each item - this is still a LUMP SUM bid.
+Only extract "line_items" when each item has an explicit dollar amount. Otherwise, put the scope list in "scope_included".
+
 Be thorough - analyze BOTH the email body AND any attached documents.
 The email body often contains important clarifications, exclusions, or conditions not in the formal quote.
 Return only valid JSON.`,
@@ -838,10 +864,12 @@ export async function handler(event) {
     const parsedBid = await analyzeWithAI(finalBody, attachments, context?.invitedPackages || [])
     console.log('AI analysis complete:', {
       total: parsedBid.total_amount,
+      isLumpSum: parsedBid.is_lump_sum,
       lineItems: parsedBid.line_items?.length || 0,
       confidence: parsedBid.confidence_score,
-      isLumpSum: parsedBid.is_lump_sum_for_multiple,
-      hasPackageBreakdown: !!parsedBid.amounts_by_package && Object.keys(parsedBid.amounts_by_package).length > 0
+      isLumpSumForMultiple: parsedBid.is_lump_sum_for_multiple,
+      hasPackageBreakdown: !!parsedBid.amounts_by_package && Object.keys(parsedBid.amounts_by_package).length > 0,
+      analysisNotes: parsedBid.analysis_notes
     })
 
     // Check if this is a clarification response with per-package breakdown
@@ -871,11 +899,19 @@ export async function handler(event) {
     // Only if: multiple packages, single lump sum, no breakdown provided, no pending clarification
     let clarificationSent = null
     const invitedPackages = context?.invitedPackages || []
+    // Detect if this is a lump sum needing clarification:
+    // - Multiple packages were invited
+    // - Got a total amount
+    // - Either is_lump_sum_for_multiple is true OR (is_lump_sum is true with no per-package breakdown)
+    // - No pending clarification already sent
+    const isLumpSumWithoutBreakdown = (
+      parsedBid.is_lump_sum_for_multiple ||
+      (parsedBid.is_lump_sum && (!parsedBid.amounts_by_package || Object.keys(parsedBid.amounts_by_package).length === 0))
+    )
     const needsClarification = (
       invitedPackages.length > 1 &&
       parsedBid.total_amount &&
-      parsedBid.is_lump_sum_for_multiple &&
-      !parsedBid.amounts_by_package &&
+      isLumpSumWithoutBreakdown &&
       !context?.pendingClarification
     )
 
@@ -899,12 +935,14 @@ export async function handler(event) {
         },
         extracted: {
           total_amount: parsedBid.total_amount,
+          is_lump_sum: parsedBid.is_lump_sum,
           line_items_count: parsedBid.line_items?.length || 0,
           has_exclusions: !!parsedBid.scope_excluded,
           has_clarifications: !!parsedBid.clarifications,
           confidence_score: parsedBid.confidence_score,
           is_lump_sum_for_multiple: parsedBid.is_lump_sum_for_multiple,
-          amounts_by_package: parsedBid.amounts_by_package || null
+          amounts_by_package: parsedBid.amounts_by_package || null,
+          analysis_notes: parsedBid.analysis_notes
         },
         saved: !!savedData,
         clarification_workflow: {
