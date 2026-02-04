@@ -5,7 +5,8 @@ import {
   Calendar, MapPin, Building2, Download, ChevronDown, ChevronRight, Trash2,
   Search, Mail, Check, X
 } from 'lucide-react'
-import { fetchProject, fetchTrades, createBidItem, fetchSubcontractors, createBid, supabase } from '../lib/supabase'
+import { fetchProject, fetchTrades, createBidItem, fetchSubcontractors, createBid, supabase, fetchScopePackages } from '../lib/supabase'
+import { BID_PACKAGE_TYPES, getPackageType } from '../lib/packageTypes'
 import BidLeveling from '../components/BidLeveling'
 import BidRounds from '../components/BidRounds'
 import ProjectBidViews from '../components/ProjectBidViews'
@@ -488,9 +489,9 @@ function AddBidItemModal({ projectId, trades, bidDate, onClose, onSuccess }) {
 }
 
 function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose, onSuccess }) {
-  const [step, setStep] = useState(1) // 1: Search & Select Items, 2: Select Subs, 3: Review & Send
+  const [step, setStep] = useState(1) // 1: Review Bid Packages, 2: Select Subs, 3: Review & Send
   const [searchQuery, setSearchQuery] = useState('')
-  const [selectedItems, setSelectedItems] = useState([])
+  const [selectedPackages, setSelectedPackages] = useState([]) // Package IDs to invite
   const [selectedSubs, setSelectedSubs] = useState([])
   const [loading, setLoading] = useState(false)
   const [sendEmails, setSendEmails] = useState(true)
@@ -498,11 +499,40 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
   const [selectedDrawings, setSelectedDrawings] = useState([])
   const [attachDrawings, setAttachDrawings] = useState(true)
   const [useDrawingLinks, setUseDrawingLinks] = useState(false)
+  const [scopePackages, setScopePackages] = useState([])
+  const [loadingPackages, setLoadingPackages] = useState(true)
+  // Track item assignments - maps item ID to package ID (allows moving)
+  const [itemAssignments, setItemAssignments] = useState({})
 
-  // Load drawings for this project
+  // Load scope packages and drawings for this project
   useEffect(() => {
-    async function loadDrawings() {
+    async function loadData() {
       try {
+        // Load scope packages
+        const packages = await fetchScopePackages(projectId)
+        setScopePackages(packages || [])
+
+        // Build initial item assignments from packages
+        const assignments = {}
+        packages?.forEach(pkg => {
+          pkg.items?.forEach(({ bid_item }) => {
+            if (bid_item?.id) {
+              assignments[bid_item.id] = pkg.id
+            }
+          })
+        })
+        setItemAssignments(assignments)
+
+        // Select all packages by default
+        setSelectedPackages((packages || []).map(p => p.id))
+      } catch (error) {
+        console.error('Error loading scope packages:', error)
+      } finally {
+        setLoadingPackages(false)
+      }
+
+      try {
+        // Load drawings
         const { data } = await supabase
           .from('drawings')
           .select('id, original_filename, drawing_number, title, discipline, file_size, storage_url, is_current')
@@ -511,68 +541,93 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
           .order('discipline')
 
         setDrawings(data || [])
-        // Select all by default
         setSelectedDrawings((data || []).map(d => d.id))
       } catch (error) {
         console.error('Error loading drawings:', error)
       }
     }
-    loadDrawings()
+    loadData()
   }, [projectId])
 
-  // Filter bid items by search query
-  const filteredItems = bidItems.filter(item => {
-    if (!searchQuery.trim()) return true
+  // Get items for each package based on current assignments
+  const getPackageItems = (packageId) => {
+    return bidItems.filter(item => itemAssignments[item.id] === packageId)
+  }
+
+  // Get unassigned items
+  const unassignedItems = bidItems.filter(item => !itemAssignments[item.id])
+
+  // Move item to a different package
+  const moveItemToPackage = (itemId, newPackageId) => {
+    setItemAssignments(prev => ({
+      ...prev,
+      [itemId]: newPackageId || undefined
+    }))
+  }
+
+  // Filter items by search
+  const filterItems = (items) => {
+    if (!searchQuery.trim()) return items
     const query = searchQuery.toLowerCase()
-    return (
+    return items.filter(item =>
       item.description?.toLowerCase().includes(query) ||
       item.trade?.name?.toLowerCase().includes(query) ||
-      item.item_number?.toLowerCase().includes(query) ||
-      item.scope_details?.toLowerCase().includes(query)
+      item.item_number?.toLowerCase().includes(query)
     )
-  })
+  }
 
-  // Group filtered items by trade
-  const itemsByTrade = filteredItems.reduce((acc, item) => {
-    const tradeId = item.trade?.id || 'unknown'
-    if (!acc[tradeId]) {
-      acc[tradeId] = { trade: item.trade, items: [] }
-    }
-    acc[tradeId].items.push(item)
-    return acc
-  }, {})
-
-  // Get relevant subcontractors based on selected items' trades
-  const selectedTradeIds = [...new Set(
-    selectedItems.map(id => bidItems.find(item => item.id === id)?.trade?.id).filter(Boolean)
-  )]
-
-  const relevantSubs = subcontractors.filter(sub =>
-    sub.trades?.some(({ trade }) => selectedTradeIds.includes(trade.id))
+  // Get all selected items from selected packages
+  const selectedItems = selectedPackages.flatMap(pkgId =>
+    getPackageItems(pkgId).map(item => item.id)
   )
 
-  // Group subcontractors by their trades
-  const subsByTrade = relevantSubs.reduce((acc, sub) => {
-    sub.trades?.forEach(({ trade }) => {
-      if (selectedTradeIds.includes(trade.id)) {
-        if (!acc[trade.id]) {
-          acc[trade.id] = { trade, subs: [] }
+  // Get package type IDs from selected packages (normalize names to IDs)
+  const normalizeToPackageTypeId = (name) => {
+    if (!name) return null
+    const normalized = name.toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
+    // Find matching package type
+    const match = BID_PACKAGE_TYPES.find(pt =>
+      pt.id === normalized ||
+      pt.name.toLowerCase() === name.toLowerCase() ||
+      pt.name.toLowerCase().replace(/[^a-z0-9]/g, '') === name.toLowerCase().replace(/[^a-z0-9]/g, '')
+    )
+    return match?.id || null
+  }
+
+  const selectedPackageTypeIds = [...new Set(
+    selectedPackages
+      .map(pkgId => scopePackages.find(p => p.id === pkgId)?.name)
+      .map(normalizeToPackageTypeId)
+      .filter(Boolean)
+  )]
+
+  // Get relevant subcontractors based on their package_types matching selected packages
+  const relevantSubs = subcontractors.filter(sub =>
+    sub.package_types?.some(pt => selectedPackageTypeIds.includes(pt))
+  )
+
+  // Group subcontractors by their package types
+  const subsByPackageType = relevantSubs.reduce((acc, sub) => {
+    sub.package_types?.forEach(typeId => {
+      if (selectedPackageTypeIds.includes(typeId)) {
+        const pkgType = getPackageType(typeId)
+        if (!acc[typeId]) {
+          acc[typeId] = { packageType: pkgType, subs: [] }
         }
-        if (!acc[trade.id].subs.find(s => s.id === sub.id)) {
-          acc[trade.id].subs.push(sub)
+        if (!acc[typeId].subs.find(s => s.id === sub.id)) {
+          acc[typeId].subs.push(sub)
         }
       }
     })
     return acc
   }, {})
 
-  function selectAllFiltered() {
-    const filteredIds = filteredItems.map(item => item.id)
-    setSelectedItems(prev => [...new Set([...prev, ...filteredIds])])
+  function selectAllPackages() {
+    setSelectedPackages(scopePackages.map(p => p.id))
   }
 
-  function clearSelection() {
-    setSelectedItems([])
+  function clearPackageSelection() {
+    setSelectedPackages([])
   }
 
   function selectAllSubs() {
@@ -580,8 +635,12 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
   }
 
   async function handleInvite() {
-    if (selectedItems.length === 0 || selectedSubs.length === 0) {
-      toast.error('Select at least one item and one subcontractor')
+    if (selectedPackages.length === 0 || selectedItems.length === 0) {
+      toast.error('Select at least one bid package with items')
+      return
+    }
+    if (selectedSubs.length === 0) {
+      toast.error('Select at least one subcontractor')
       return
     }
 
@@ -681,7 +740,7 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
           <div>
             <h2 className="text-lg font-semibold">Invite Subcontractors to Bid</h2>
             <p className="text-sm text-gray-500">
-              {step === 1 && 'Step 1: Search and select bid items'}
+              {step === 1 && 'Step 1: Review and select bid packages'}
               {step === 2 && 'Step 2: Select subcontractors'}
               {step === 3 && 'Step 3: Review and send'}
             </p>
@@ -691,7 +750,7 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
           </button>
         </div>
 
-        {/* Step 1: Search & Select Items */}
+        {/* Step 1: Review Bid Packages */}
         {step === 1 && (
           <>
             <div className="p-4 border-b border-gray-200">
@@ -699,102 +758,164 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
                 <input
                   type="text"
-                  placeholder="Search bid items by keyword (e.g., concrete, electrical, drywall...)"
+                  placeholder="Search items within packages..."
                   className="input pl-10"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  autoFocus
                 />
               </div>
               <div className="flex items-center gap-2 mt-3">
                 <button
-                  onClick={selectAllFiltered}
+                  onClick={selectAllPackages}
                   className="text-sm text-primary-600 hover:text-primary-700"
                 >
-                  Select all {filteredItems.length} matching
+                  Select all {scopePackages.length} packages
                 </button>
                 <span className="text-gray-300">|</span>
                 <button
-                  onClick={clearSelection}
+                  onClick={clearPackageSelection}
                   className="text-sm text-gray-600 hover:text-gray-700"
                 >
                   Clear selection
                 </button>
                 <span className="ml-auto text-sm text-gray-500">
-                  {selectedItems.length} selected
+                  {selectedPackages.length} packages, {selectedItems.length} items
                 </span>
               </div>
             </div>
 
             <div className="flex-1 overflow-y-auto p-4">
-              {Object.keys(itemsByTrade).length > 0 ? (
-                Object.values(itemsByTrade).map(({ trade, items }) => (
-                  <div key={trade?.id || 'unknown'} className="mb-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="font-medium text-gray-900">
-                        {trade ? `Div ${trade.division_code}: ${trade.name}` : 'Unknown Trade'}
-                      </span>
-                      <span className="text-sm text-gray-500">({items.length})</span>
-                      <button
-                        onClick={() => {
-                          const tradeItemIds = items.map(i => i.id)
-                          const allSelected = tradeItemIds.every(id => selectedItems.includes(id))
-                          if (allSelected) {
-                            setSelectedItems(prev => prev.filter(id => !tradeItemIds.includes(id)))
-                          } else {
-                            setSelectedItems(prev => [...new Set([...prev, ...tradeItemIds])])
-                          }
-                        }}
-                        className="text-xs text-primary-600 hover:underline ml-2"
-                      >
-                        {items.every(i => selectedItems.includes(i.id)) ? 'Deselect all' : 'Select all'}
-                      </button>
-                    </div>
-                    <div className="border rounded-lg divide-y">
-                      {items.map(item => (
-                        <label
-                          key={item.id}
-                          className={`flex items-start gap-3 p-3 cursor-pointer hover:bg-gray-50 ${
-                            selectedItems.includes(item.id) ? 'bg-primary-50' : ''
-                          }`}
-                        >
+              {loadingPackages ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary-600"></div>
+                  <span className="ml-2 text-gray-500">Loading bid packages...</span>
+                </div>
+              ) : scopePackages.length > 0 ? (
+                <>
+                  {scopePackages.map(pkg => {
+                    const pkgItems = filterItems(getPackageItems(pkg.id))
+                    const isSelected = selectedPackages.includes(pkg.id)
+                    return (
+                      <div key={pkg.id} className="mb-4">
+                        <label className="flex items-center gap-2 mb-2 cursor-pointer">
                           <input
                             type="checkbox"
-                            checked={selectedItems.includes(item.id)}
+                            checked={isSelected}
                             onChange={(e) => {
                               if (e.target.checked) {
-                                setSelectedItems([...selectedItems, item.id])
+                                setSelectedPackages([...selectedPackages, pkg.id])
                               } else {
-                                setSelectedItems(selectedItems.filter(id => id !== item.id))
+                                setSelectedPackages(selectedPackages.filter(id => id !== pkg.id))
                               }
                             }}
-                            className="mt-1 rounded border-gray-300"
+                            className="rounded border-gray-300"
                           />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              {item.item_number && (
-                                <span className="text-sm font-medium text-gray-500">
-                                  #{item.item_number}
-                                </span>
-                              )}
-                              <span className="font-medium text-gray-900">{item.description}</span>
-                            </div>
-                            {(item.quantity || item.scope_details) && (
-                              <p className="text-sm text-gray-500 mt-1">
-                                {item.quantity && `Qty: ${item.quantity} ${item.unit || ''}`}
-                                {item.quantity && item.scope_details && ' • '}
-                                {item.scope_details && item.scope_details.substring(0, 100)}
-                              </p>
-                            )}
-                          </div>
+                          <span className="font-semibold text-gray-900">{pkg.name}</span>
+                          <span className="text-sm text-gray-500">({pkgItems.length} items)</span>
                         </label>
-                      ))}
+                        <div className={`border rounded-lg divide-y ${isSelected ? 'border-primary-300 bg-primary-50/30' : ''}`}>
+                          {pkgItems.length > 0 ? (
+                            pkgItems.map(item => (
+                              <div key={item.id} className="p-3 hover:bg-gray-50">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2">
+                                      {item.item_number && (
+                                        <span className="text-xs font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
+                                          #{item.item_number}
+                                        </span>
+                                      )}
+                                      <span className="font-medium text-gray-900">{item.description}</span>
+                                    </div>
+                                    <div className="flex items-center gap-3 mt-1 text-sm text-gray-500">
+                                      {item.trade && (
+                                        <span className="text-xs bg-gray-100 px-1.5 py-0.5 rounded">
+                                          {item.trade.name}
+                                        </span>
+                                      )}
+                                      {item.quantity && <span>Qty: {item.quantity} {item.unit || ''}</span>}
+                                    </div>
+                                    {item.scope_details && (
+                                      <p className="text-sm text-gray-500 mt-1 line-clamp-2">
+                                        {item.scope_details}
+                                      </p>
+                                    )}
+                                  </div>
+                                  <select
+                                    value={pkg.id}
+                                    onChange={(e) => moveItemToPackage(item.id, e.target.value)}
+                                    className="text-xs border border-gray-300 rounded px-2 py-1 bg-white"
+                                    title="Move to package"
+                                  >
+                                    {scopePackages.map(p => (
+                                      <option key={p.id} value={p.id}>{p.name}</option>
+                                    ))}
+                                    <option value="">Unassigned</option>
+                                  </select>
+                                </div>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="p-3 text-center text-sm text-gray-400">
+                              No items in this package
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+
+                  {/* Unassigned Items */}
+                  {filterItems(unassignedItems).length > 0 && (
+                    <div className="mb-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="font-semibold text-orange-600">Unassigned Items</span>
+                        <span className="text-sm text-gray-500">({filterItems(unassignedItems).length} items)</span>
+                      </div>
+                      <div className="border border-orange-200 rounded-lg divide-y bg-orange-50/30">
+                        {filterItems(unassignedItems).map(item => (
+                          <div key={item.id} className="p-3 hover:bg-orange-50">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  {item.item_number && (
+                                    <span className="text-xs font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
+                                      #{item.item_number}
+                                    </span>
+                                  )}
+                                  <span className="font-medium text-gray-900">{item.description}</span>
+                                </div>
+                                <div className="flex items-center gap-3 mt-1 text-sm text-gray-500">
+                                  {item.trade && (
+                                    <span className="text-xs bg-gray-100 px-1.5 py-0.5 rounded">
+                                      {item.trade.name}
+                                    </span>
+                                  )}
+                                  {item.quantity && <span>Qty: {item.quantity} {item.unit || ''}</span>}
+                                </div>
+                              </div>
+                              <select
+                                value=""
+                                onChange={(e) => moveItemToPackage(item.id, e.target.value)}
+                                className="text-xs border border-orange-300 rounded px-2 py-1 bg-white"
+                                title="Assign to package"
+                              >
+                                <option value="">Select package...</option>
+                                {scopePackages.map(p => (
+                                  <option key={p.id} value={p.id}>{p.name}</option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                ))
+                  )}
+                </>
               ) : (
                 <div className="text-center py-8 text-gray-500">
-                  {searchQuery ? 'No items match your search' : 'No bid items available'}
+                  <p className="mb-2">No bid packages created yet.</p>
+                  <p className="text-sm">Use the "AI Auto-Generate" button on the Bid Package view to create packages.</p>
                 </div>
               )}
             </div>
@@ -806,7 +927,7 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
           <>
             <div className="p-4 border-b border-gray-200">
               <p className="text-sm text-gray-600 mb-2">
-                Showing subcontractors for selected trades: {selectedTradeIds.length} trade(s)
+                Showing subcontractors for selected packages: {selectedPackageTypeIds.length} package type(s)
               </p>
               <div className="flex items-center gap-2">
                 <button
@@ -829,11 +950,11 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
             </div>
 
             <div className="flex-1 overflow-y-auto p-4">
-              {Object.keys(subsByTrade).length > 0 ? (
-                Object.values(subsByTrade).map(({ trade, subs }) => (
-                  <div key={trade.id} className="mb-4">
+              {Object.keys(subsByPackageType).length > 0 ? (
+                Object.values(subsByPackageType).map(({ packageType, subs }) => (
+                  <div key={packageType?.id || 'unknown'} className="mb-4">
                     <div className="font-medium text-gray-900 mb-2">
-                      Div {trade.division_code}: {trade.name}
+                      {packageType?.name || 'Other'}
                     </div>
                     <div className="border rounded-lg divide-y">
                       {subs.map(sub => (
@@ -878,7 +999,9 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
                 ))
               ) : (
                 <div className="text-center py-8 text-gray-500">
-                  No subcontractors found for the selected trades.
+                  No subcontractors found for the selected bid packages.
+                  <br />
+                  <span className="text-sm">Make sure subcontractors have matching package types set.</span>
                   <br />
                   <Link to="/subcontractors/new" className="text-primary-600 hover:underline">
                     Add subcontractors
@@ -895,20 +1018,33 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
               <h3 className="font-medium text-blue-900 mb-2">Summary</h3>
               <ul className="text-sm text-blue-800 space-y-1">
-                <li>• {selectedItems.length} bid item(s) selected</li>
+                <li>• {selectedPackages.length} bid package(s) selected</li>
+                <li>• {selectedItems.length} bid item(s) included</li>
                 <li>• {selectedSubs.length} subcontractor(s) selected</li>
                 <li>• {selectedItems.length * selectedSubs.length} total invitation(s) will be created</li>
               </ul>
             </div>
 
             <div>
-              <h3 className="font-medium text-gray-900 mb-2">Selected Bid Items</h3>
-              <div className="border rounded-lg max-h-32 overflow-y-auto">
-                {selectedItems.map(id => {
-                  const item = bidItems.find(i => i.id === id)
+              <h3 className="font-medium text-gray-900 mb-2">Selected Bid Packages</h3>
+              <div className="border rounded-lg max-h-48 overflow-y-auto divide-y">
+                {selectedPackages.map(pkgId => {
+                  const pkg = scopePackages.find(p => p.id === pkgId)
+                  const pkgItems = getPackageItems(pkgId)
                   return (
-                    <div key={id} className="p-2 border-b last:border-b-0 text-sm">
-                      <span className="font-medium">{item?.trade?.name}</span>: {item?.description}
+                    <div key={pkgId} className="p-3">
+                      <div className="font-medium text-gray-900 mb-1">{pkg?.name}</div>
+                      <ul className="text-sm text-gray-600 space-y-0.5 ml-3">
+                        {pkgItems.slice(0, 5).map(item => (
+                          <li key={item.id} className="list-disc list-inside">
+                            {item.item_number && <span className="text-gray-400">#{item.item_number} </span>}
+                            {item.description}
+                          </li>
+                        ))}
+                        {pkgItems.length > 5 && (
+                          <li className="text-gray-400 italic">...and {pkgItems.length - 5} more items</li>
+                        )}
+                      </ul>
                     </div>
                   )
                 })}
@@ -973,15 +1109,15 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
               <button
                 className="btn btn-primary"
                 onClick={() => setStep(step + 1)}
-                disabled={step === 1 ? selectedItems.length === 0 : selectedSubs.length === 0}
+                disabled={step === 1 ? selectedPackages.length === 0 : selectedSubs.length === 0}
               >
-                Continue
+                Continue ({step === 1 ? `${selectedPackages.length} packages` : `${selectedSubs.length} subs`})
               </button>
             ) : (
               <button
                 className="btn btn-success flex items-center gap-2"
                 onClick={handleInvite}
-                disabled={loading}
+                disabled={loading || selectedItems.length === 0}
               >
                 {loading ? (
                   'Sending...'

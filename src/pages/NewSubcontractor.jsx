@@ -1,14 +1,14 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { ArrowLeft, Save } from 'lucide-react'
-import { createSubcontractor, fetchTrades } from '../lib/supabase'
+import { createSubcontractor } from '../lib/supabase'
+import { BID_PACKAGE_TYPES } from '../lib/packageTypes'
 import toast from 'react-hot-toast'
 
 export default function NewSubcontractor() {
   const navigate = useNavigate()
   const [loading, setLoading] = useState(false)
-  const [trades, setTrades] = useState([])
-  const [selectedTrades, setSelectedTrades] = useState([])
+  const [selectedPackageTypes, setSelectedPackageTypes] = useState([])
   const [form, setForm] = useState({
     company_name: '',
     contact_name: '',
@@ -26,19 +26,6 @@ export default function NewSubcontractor() {
     is_preferred: false
   })
 
-  useEffect(() => {
-    loadTrades()
-  }, [])
-
-  async function loadTrades() {
-    try {
-      const data = await fetchTrades()
-      setTrades(data || [])
-    } catch (error) {
-      console.error('Error loading trades:', error)
-    }
-  }
-
   function handleChange(e) {
     const { name, value, type, checked } = e.target
     setForm(prev => ({
@@ -47,11 +34,11 @@ export default function NewSubcontractor() {
     }))
   }
 
-  function toggleTrade(tradeId) {
-    setSelectedTrades(prev =>
-      prev.includes(tradeId)
-        ? prev.filter(id => id !== tradeId)
-        : [...prev, tradeId]
+  function togglePackageType(typeId) {
+    setSelectedPackageTypes(prev =>
+      prev.includes(typeId)
+        ? prev.filter(id => id !== typeId)
+        : [...prev, typeId]
     )
   }
 
@@ -69,10 +56,11 @@ export default function NewSubcontractor() {
         ...form,
         bonding_capacity: form.bonding_capacity ? parseFloat(form.bonding_capacity) : null,
         rating: form.rating ? parseInt(form.rating) : null,
-        insurance_expiry: form.insurance_expiry || null
+        insurance_expiry: form.insurance_expiry || null,
+        package_types: selectedPackageTypes
       }
 
-      const sub = await createSubcontractor(subData, selectedTrades)
+      const sub = await createSubcontractor(subData)
       toast.success('Subcontractor added successfully')
       navigate(`/subcontractors/${sub.id}`)
     } catch (error) {
@@ -216,27 +204,38 @@ export default function NewSubcontractor() {
             </div>
           </div>
 
-          {/* Trades */}
+          {/* Bid Package Types */}
           <div>
-            <h3 className="text-sm font-semibold text-gray-900 mb-3">Trades</h3>
-            <div className="grid gap-2 grid-cols-2 md:grid-cols-3 max-h-48 overflow-y-auto border rounded-lg p-3">
-              {trades.map(trade => (
+            <h3 className="text-sm font-semibold text-gray-900 mb-1">Bid Package Types</h3>
+            <p className="text-xs text-gray-500 mb-3">Select the types of work this subcontractor bids on</p>
+            <div className="grid gap-2 grid-cols-1 md:grid-cols-2 max-h-64 overflow-y-auto border rounded-lg p-3">
+              {BID_PACKAGE_TYPES.map(pkgType => (
                 <label
-                  key={trade.id}
-                  className="flex items-center gap-2 p-2 rounded hover:bg-gray-50 cursor-pointer"
+                  key={pkgType.id}
+                  className={`flex items-start gap-2 p-2 rounded cursor-pointer transition ${
+                    selectedPackageTypes.includes(pkgType.id)
+                      ? 'bg-primary-50 border border-primary-200'
+                      : 'hover:bg-gray-50 border border-transparent'
+                  }`}
                 >
                   <input
                     type="checkbox"
-                    checked={selectedTrades.includes(trade.id)}
-                    onChange={() => toggleTrade(trade.id)}
-                    className="rounded border-gray-300"
+                    checked={selectedPackageTypes.includes(pkgType.id)}
+                    onChange={() => togglePackageType(pkgType.id)}
+                    className="rounded border-gray-300 mt-0.5"
                   />
-                  <span className="text-sm">
-                    {trade.division_code} - {trade.name}
-                  </span>
+                  <div>
+                    <span className="text-sm font-medium">{pkgType.name}</span>
+                    <p className="text-xs text-gray-500">{pkgType.description}</p>
+                  </div>
                 </label>
               ))}
             </div>
+            {selectedPackageTypes.length > 0 && (
+              <p className="text-xs text-gray-500 mt-2">
+                {selectedPackageTypes.length} package type(s) selected
+              </p>
+            )}
           </div>
 
           {/* Additional Info */}
