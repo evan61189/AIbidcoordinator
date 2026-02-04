@@ -79,6 +79,29 @@ export default function BidLeveling({ projectId, projectName }) {
     })
   }
 
+  /**
+   * Calculate effective total for a bid response
+   * - If bid has line items with totals, sum those
+   * - Otherwise, use the total_amount field
+   * This allows proper comparison of itemized bids vs lump sum bids
+   */
+  function getEffectiveTotal(bid) {
+    // Check if bid has usable line items with totals
+    const lineItems = bid.line_items || []
+    const lineItemsWithTotals = lineItems.filter(item =>
+      item.total != null && item.total > 0
+    )
+
+    if (lineItemsWithTotals.length > 0) {
+      // Sum up all line item totals
+      const sum = lineItemsWithTotals.reduce((acc, item) => acc + (item.total || 0), 0)
+      return { amount: sum, isItemized: true, itemCount: lineItemsWithTotals.length }
+    }
+
+    // Fall back to total_amount (lump sum)
+    return { amount: bid.total_amount, isItemized: false, itemCount: 0 }
+  }
+
   async function updateResponseStatus(responseId, newStatus) {
     try {
       const { error } = await supabase
@@ -108,6 +131,7 @@ export default function BidLeveling({ projectId, projectName }) {
     const headers = [
       'Subcontractor',
       'Total Amount',
+      'Pricing Type',
       'Status',
       'Inclusions',
       'Exclusions',
@@ -118,19 +142,23 @@ export default function BidLeveling({ projectId, projectName }) {
       'Received Date'
     ]
 
-    // Build CSV rows
-    const rows = bidResponses.map(bid => [
-      bid.subcontractor?.company_name || 'Unknown',
-      bid.total_amount || '',
-      bid.status,
-      bid.scope_included || '',
-      bid.scope_excluded || '',
-      bid.clarifications || '',
-      bid.lead_time || '',
-      bid.valid_until || '',
-      bid.ai_confidence_score || '',
-      bid.inbound_email?.received_at || ''
-    ])
+    // Build CSV rows with effective totals
+    const rows = bidResponses.map(bid => {
+      const bidTotal = getEffectiveTotal(bid)
+      return [
+        bid.subcontractor?.company_name || 'Unknown',
+        bidTotal.amount || '',
+        bidTotal.isItemized ? `Itemized (${bidTotal.itemCount} items)` : 'Lump Sum',
+        bid.status,
+        bid.scope_included || '',
+        bid.scope_excluded || '',
+        bid.clarifications || '',
+        bid.lead_time || '',
+        bid.valid_until || '',
+        bid.ai_confidence_score || '',
+        bid.inbound_email?.received_at || ''
+      ]
+    })
 
     // Convert to CSV string
     const csvContent = [
@@ -182,8 +210,17 @@ export default function BidLeveling({ projectId, projectName }) {
     )
   }
 
-  // Find lowest bid for highlighting
-  const lowestBid = Math.min(...bidResponses.filter(b => b.total_amount).map(b => b.total_amount))
+  // Calculate effective totals for all bids (handles both itemized and lump sum)
+  const bidTotals = bidResponses.map(bid => ({
+    id: bid.id,
+    ...getEffectiveTotal(bid)
+  }))
+
+  // Find lowest bid for highlighting (using effective totals)
+  const validTotals = bidTotals.filter(b => b.amount && b.amount > 0)
+  const lowestBid = validTotals.length > 0
+    ? Math.min(...validTotals.map(b => b.amount))
+    : null
 
   return (
     <div className="bg-white rounded-lg shadow">
@@ -241,12 +278,29 @@ export default function BidLeveling({ projectId, projectName }) {
                   </div>
                 </td>
                 <td className="p-4 text-right">
-                  <div className={`text-lg font-semibold ${bid.total_amount === lowestBid ? 'text-green-600' : 'text-gray-900'}`}>
-                    {formatCurrency(bid.total_amount)}
-                  </div>
-                  {bid.total_amount === lowestBid && (
-                    <span className="text-xs text-green-600">Lowest</span>
-                  )}
+                  {(() => {
+                    const bidTotal = bidTotals.find(b => b.id === bid.id)
+                    const effectiveAmount = bidTotal?.amount
+                    const isLowest = effectiveAmount === lowestBid && lowestBid !== null
+                    return (
+                      <>
+                        <div className={`text-lg font-semibold ${isLowest ? 'text-green-600' : 'text-gray-900'}`}>
+                          {formatCurrency(effectiveAmount)}
+                        </div>
+                        <div className="flex items-center justify-end gap-1">
+                          {isLowest && (
+                            <span className="text-xs text-green-600">Lowest</span>
+                          )}
+                          {bidTotal?.isItemized && (
+                            <span className="text-xs text-gray-400">({bidTotal.itemCount} items)</span>
+                          )}
+                          {!bidTotal?.isItemized && effectiveAmount && (
+                            <span className="text-xs text-gray-400">(lump sum)</span>
+                          )}
+                        </div>
+                      </>
+                    )
+                  })()}
                 </td>
                 <td className="p-4 text-center">
                   <span className={`inline-block px-2 py-1 rounded-full text-xs font-medium ${statusColors[bid.status] || 'bg-gray-100'}`}>
