@@ -588,9 +588,9 @@ The Estimating Team
 }
 
 /**
- * Save per-package bids from a clarification response
+ * Save per-package bids from a clarification response to package_bids table
  */
-async function savePerPackageBids(context, parsedBid) {
+async function savePerPackageBids(context, parsedBid, bidResponseId = null) {
   if (!supabase) return null
 
   const { subcontractor, project, invitedPackages, pendingClarification } = context
@@ -603,7 +603,7 @@ async function savePerPackageBids(context, parsedBid) {
   const results = []
 
   for (const [packageName, amount] of Object.entries(amounts_by_package)) {
-    // Find the package
+    // Find the package (case-insensitive match)
     const pkg = invitedPackages.find(p =>
       (p.name || p).toLowerCase() === packageName.toLowerCase()
     )
@@ -613,36 +613,32 @@ async function savePerPackageBids(context, parsedBid) {
       continue
     }
 
-    // Get bid items for this package
-    const { data: packageItems } = await supabase
-      .from('scope_package_items')
-      .select('bid_item_id')
-      .eq('scope_package_id', pkg.id)
-
-    if (!packageItems?.length) {
-      console.log(`No items found for package: ${packageName}`)
-      continue
-    }
-
-    // Create a bid for the package (using first item as representative)
-    const { data: bid, error } = await supabase
-      .from('bids')
+    // Create a package-level bid in the package_bids table
+    const { data: packageBid, error } = await supabase
+      .from('package_bids')
       .insert({
-        bid_item_id: packageItems[0].bid_item_id,
+        project_id: project.id,
+        scope_package_id: pkg.id,
         subcontractor_id: subcontractor.id,
         amount: amount,
-        status: 'submitted',
-        notes: `Package bid for ${packageName} (from clarification response)`,
+        status: 'pending_approval',
+        source: pendingClarification ? 'clarification_response' : 'email',
+        bid_response_id: bidResponseId,
+        clarification_id: pendingClarification?.id,
+        scope_included: parsedBid.scope_included,
+        scope_excluded: parsedBid.scope_excluded,
+        clarifications: parsedBid.clarifications,
+        notes: `Package bid for ${packageName}`,
         submitted_at: new Date().toISOString()
       })
       .select()
       .single()
 
     if (error) {
-      console.error(`Error creating bid for ${packageName}:`, error)
+      console.error(`Error creating package bid for ${packageName}:`, error)
     } else {
-      results.push({ package: packageName, bid_id: bid.id, amount })
-      console.log(`Created bid for ${packageName}: $${amount}`)
+      results.push({ package: packageName, package_bid_id: packageBid.id, amount })
+      console.log(`Created package bid for ${packageName}: $${amount}`)
     }
   }
 
@@ -872,15 +868,7 @@ export async function handler(event) {
       analysisNotes: parsedBid.analysis_notes
     })
 
-    // Check if this is a clarification response with per-package breakdown
-    let perPackageBidsCreated = null
-    if (context?.pendingClarification && parsedBid.amounts_by_package && Object.keys(parsedBid.amounts_by_package).length > 0) {
-      console.log('Processing clarification response with per-package breakdown...')
-      perPackageBidsCreated = await savePerPackageBids(context, parsedBid)
-      console.log('Per-package bids created:', perPackageBidsCreated)
-    }
-
-    // Save to database
+    // Save to database first (so we have bid_response_id for package bids)
     const savedData = await saveBidResponse(
       {
         from: fromEmail,
@@ -894,11 +882,33 @@ export async function handler(event) {
       parsedBid,
       context
     )
+    const bidResponseId = savedData?.bidResponse?.id
+
+    // Check if this is a clarification response with per-package breakdown
+    let perPackageBidsCreated = null
+    const invitedPackages = context?.invitedPackages || []
+
+    if (parsedBid.amounts_by_package && Object.keys(parsedBid.amounts_by_package).length > 0) {
+      // We have per-package amounts - save them to package_bids table
+      console.log('Processing bid with per-package breakdown...')
+      perPackageBidsCreated = await savePerPackageBids(context, parsedBid, bidResponseId)
+      console.log('Per-package bids created:', perPackageBidsCreated)
+    } else if (invitedPackages.length === 1 && parsedBid.total_amount) {
+      // Single package invitation with lump sum - auto-create package bid
+      console.log('Single package bid detected - creating package bid...')
+      const singlePackageBid = {
+        ...parsedBid,
+        amounts_by_package: {
+          [invitedPackages[0].name]: parsedBid.total_amount
+        }
+      }
+      perPackageBidsCreated = await savePerPackageBids(context, singlePackageBid, bidResponseId)
+      console.log('Single package bid created:', perPackageBidsCreated)
+    }
 
     // Check if we need to send a clarification request
     // Only if: multiple packages, single lump sum, no breakdown provided, no pending clarification
     let clarificationSent = null
-    const invitedPackages = context?.invitedPackages || []
     // Detect if this is a lump sum needing clarification:
     // - Multiple packages were invited
     // - Got a total amount
