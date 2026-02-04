@@ -796,8 +796,10 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
                     const pkgItems = filterItems(getPackageItems(pkg.id))
                     const isSelected = selectedPackages.includes(pkg.id)
                     return (
-                      <div key={pkg.id} className="mb-4">
-                        <label className="flex items-center gap-2 mb-2 cursor-pointer">
+                      <div key={pkg.id} className="mb-3">
+                        <label className={`flex items-center gap-2 p-3 rounded-lg cursor-pointer border ${
+                          isSelected ? 'border-primary-300 bg-primary-50' : 'border-gray-200 hover:bg-gray-50'
+                        }`}>
                           <input
                             type="checkbox"
                             checked={isSelected}
@@ -810,105 +812,48 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
                             }}
                             className="rounded border-gray-300"
                           />
-                          <span className="font-semibold text-gray-900">{pkg.name}</span>
-                          <span className="text-sm text-gray-500">({pkgItems.length} items)</span>
+                          <div className="flex-1">
+                            <span className="font-semibold text-gray-900">{pkg.name}</span>
+                            <span className="text-sm text-gray-500 ml-2">({pkgItems.length} items)</span>
+                            {pkgItems.length > 0 && (
+                              <ul className="mt-2 ml-4 text-sm text-gray-600 space-y-0.5">
+                                {pkgItems.slice(0, 8).map(item => (
+                                  <li key={item.id} className="list-disc list-inside">
+                                    {item.item_number && <span className="text-gray-400">#{item.item_number} </span>}
+                                    {item.description}
+                                    {item.quantity && <span className="text-gray-400"> ({item.quantity} {item.unit || ''})</span>}
+                                  </li>
+                                ))}
+                                {pkgItems.length > 8 && (
+                                  <li className="text-gray-400 italic list-none ml-4">...and {pkgItems.length - 8} more items</li>
+                                )}
+                              </ul>
+                            )}
+                          </div>
                         </label>
-                        <div className={`border rounded-lg divide-y ${isSelected ? 'border-primary-300 bg-primary-50/30' : ''}`}>
-                          {pkgItems.length > 0 ? (
-                            pkgItems.map(item => (
-                              <div key={item.id} className="p-3 hover:bg-gray-50">
-                                <div className="flex items-start justify-between gap-3">
-                                  <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-2">
-                                      {item.item_number && (
-                                        <span className="text-xs font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
-                                          #{item.item_number}
-                                        </span>
-                                      )}
-                                      <span className="font-medium text-gray-900">{item.description}</span>
-                                    </div>
-                                    <div className="flex items-center gap-3 mt-1 text-sm text-gray-500">
-                                      {item.trade && (
-                                        <span className="text-xs bg-gray-100 px-1.5 py-0.5 rounded">
-                                          {item.trade.name}
-                                        </span>
-                                      )}
-                                      {item.quantity && <span>Qty: {item.quantity} {item.unit || ''}</span>}
-                                    </div>
-                                    {item.scope_details && (
-                                      <p className="text-sm text-gray-500 mt-1 line-clamp-2">
-                                        {item.scope_details}
-                                      </p>
-                                    )}
-                                  </div>
-                                  <select
-                                    value={pkg.id}
-                                    onChange={(e) => moveItemToPackage(item.id, e.target.value)}
-                                    className="text-xs border border-gray-300 rounded px-2 py-1 bg-white"
-                                    title="Move to package"
-                                  >
-                                    {scopePackages.map(p => (
-                                      <option key={p.id} value={p.id}>{p.name}</option>
-                                    ))}
-                                    <option value="">Unassigned</option>
-                                  </select>
-                                </div>
-                              </div>
-                            ))
-                          ) : (
-                            <div className="p-3 text-center text-sm text-gray-400">
-                              No items in this package
-                            </div>
-                          )}
-                        </div>
                       </div>
                     )
                   })}
 
                   {/* Unassigned Items */}
                   {filterItems(unassignedItems).length > 0 && (
-                    <div className="mb-4">
+                    <div className="mb-3 p-3 rounded-lg border border-orange-200 bg-orange-50/50">
                       <div className="flex items-center gap-2 mb-2">
                         <span className="font-semibold text-orange-600">Unassigned Items</span>
-                        <span className="text-sm text-gray-500">({filterItems(unassignedItems).length} items)</span>
+                        <span className="text-sm text-gray-500">({filterItems(unassignedItems).length})</span>
                       </div>
-                      <div className="border border-orange-200 rounded-lg divide-y bg-orange-50/30">
-                        {filterItems(unassignedItems).map(item => (
-                          <div key={item.id} className="p-3 hover:bg-orange-50">
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2">
-                                  {item.item_number && (
-                                    <span className="text-xs font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
-                                      #{item.item_number}
-                                    </span>
-                                  )}
-                                  <span className="font-medium text-gray-900">{item.description}</span>
-                                </div>
-                                <div className="flex items-center gap-3 mt-1 text-sm text-gray-500">
-                                  {item.trade && (
-                                    <span className="text-xs bg-gray-100 px-1.5 py-0.5 rounded">
-                                      {item.trade.name}
-                                    </span>
-                                  )}
-                                  {item.quantity && <span>Qty: {item.quantity} {item.unit || ''}</span>}
-                                </div>
-                              </div>
-                              <select
-                                value=""
-                                onChange={(e) => moveItemToPackage(item.id, e.target.value)}
-                                className="text-xs border border-orange-300 rounded px-2 py-1 bg-white"
-                                title="Assign to package"
-                              >
-                                <option value="">Select package...</option>
-                                {scopePackages.map(p => (
-                                  <option key={p.id} value={p.id}>{p.name}</option>
-                                ))}
-                              </select>
-                            </div>
-                          </div>
+                      <ul className="ml-4 text-sm text-gray-600 space-y-0.5">
+                        {filterItems(unassignedItems).slice(0, 5).map(item => (
+                          <li key={item.id} className="list-disc list-inside">
+                            {item.item_number && <span className="text-gray-400">#{item.item_number} </span>}
+                            {item.description}
+                          </li>
                         ))}
-                      </div>
+                        {filterItems(unassignedItems).length > 5 && (
+                          <li className="text-gray-400 italic list-none ml-4">...and {filterItems(unassignedItems).length - 5} more</li>
+                        )}
+                      </ul>
+                      <p className="text-xs text-orange-600 mt-2">These items need to be assigned to packages first.</p>
                     </div>
                   )}
                 </>
@@ -927,7 +872,7 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
           <>
             <div className="p-4 border-b border-gray-200">
               <p className="text-sm text-gray-600 mb-2">
-                Showing subcontractors for selected packages: {selectedPackageTypeIds.length} package type(s)
+                Showing {relevantSubs.length} subcontractor(s) matching selected packages
               </p>
               <div className="flex items-center gap-2">
                 <button
@@ -950,53 +895,53 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
             </div>
 
             <div className="flex-1 overflow-y-auto p-4">
-              {Object.keys(subsByPackageType).length > 0 ? (
-                Object.values(subsByPackageType).map(({ packageType, subs }) => (
-                  <div key={packageType?.id || 'unknown'} className="mb-4">
-                    <div className="font-medium text-gray-900 mb-2">
-                      {packageType?.name || 'Other'}
-                    </div>
-                    <div className="border rounded-lg divide-y">
-                      {subs.map(sub => (
-                        <label
-                          key={sub.id}
-                          className={`flex items-center gap-3 p-3 cursor-pointer hover:bg-gray-50 ${
-                            selectedSubs.includes(sub.id) ? 'bg-primary-50' : ''
-                          }`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={selectedSubs.includes(sub.id)}
-                            onChange={(e) => {
-                              if (e.target.checked) {
-                                setSelectedSubs([...selectedSubs, sub.id])
-                              } else {
-                                setSelectedSubs(selectedSubs.filter(id => id !== sub.id))
-                              }
-                            }}
-                            className="rounded border-gray-300"
-                          />
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium">{sub.company_name}</span>
-                              {sub.is_preferred && (
-                                <span className="badge badge-success text-xs">Preferred</span>
-                              )}
-                            </div>
-                            {sub.email && (
-                              <p className="text-sm text-gray-500">{sub.email}</p>
-                            )}
-                          </div>
-                          {sub.email ? (
-                            <Mail className="h-4 w-4 text-green-500" />
-                          ) : (
-                            <span className="text-xs text-gray-400">No email</span>
+              {relevantSubs.length > 0 ? (
+                <div className="border rounded-lg divide-y">
+                  {relevantSubs.map(sub => (
+                    <label
+                      key={sub.id}
+                      className={`flex items-center gap-3 p-3 cursor-pointer hover:bg-gray-50 ${
+                        selectedSubs.includes(sub.id) ? 'bg-primary-50' : ''
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedSubs.includes(sub.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedSubs([...selectedSubs, sub.id])
+                          } else {
+                            setSelectedSubs(selectedSubs.filter(id => id !== sub.id))
+                          }
+                        }}
+                        className="rounded border-gray-300"
+                      />
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{sub.company_name}</span>
+                          {sub.is_preferred && (
+                            <span className="badge badge-success text-xs">Preferred</span>
                           )}
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                ))
+                        </div>
+                        <div className="flex items-center gap-2 mt-1">
+                          {sub.email && (
+                            <span className="text-sm text-gray-500">{sub.email}</span>
+                          )}
+                          {sub.package_types?.length > 0 && (
+                            <span className="text-xs text-gray-400">
+                              ({sub.package_types.map(pt => getPackageType(pt)?.name).filter(Boolean).join(', ')})
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      {sub.email ? (
+                        <Mail className="h-4 w-4 text-green-500" />
+                      ) : (
+                        <span className="text-xs text-gray-400">No email</span>
+                      )}
+                    </label>
+                  ))}
+                </div>
               ) : (
                 <div className="text-center py-8 text-gray-500">
                   No subcontractors found for the selected bid packages.
