@@ -1,15 +1,16 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { Plus, Search, Users, Star, Phone, Mail, MapPin, Upload } from 'lucide-react'
-import { fetchSubcontractors, fetchTrades } from '../lib/supabase'
+import { Plus, Search, Users, Star, Phone, Mail, MapPin, Upload, Trash2 } from 'lucide-react'
+import { fetchSubcontractors, supabase } from '../lib/supabase'
+import { BID_PACKAGE_TYPES, getPackageType } from '../lib/packageTypes'
 import SubcontractorBulkUpload from '../components/SubcontractorBulkUpload'
+import toast from 'react-hot-toast'
 
 export default function Subcontractors() {
   const [subcontractors, setSubcontractors] = useState([])
-  const [trades, setTrades] = useState([])
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
-  const [tradeFilter, setTradeFilter] = useState('all')
+  const [packageTypeFilter, setPackageTypeFilter] = useState('all')
   const [showInactive, setShowInactive] = useState(false)
   const [showBulkUpload, setShowBulkUpload] = useState(false)
 
@@ -20,16 +21,36 @@ export default function Subcontractors() {
   async function loadData() {
     setLoading(true)
     try {
-      const [subsData, tradesData] = await Promise.all([
-        fetchSubcontractors(!showInactive),
-        fetchTrades()
-      ])
+      const subsData = await fetchSubcontractors(!showInactive)
       setSubcontractors(subsData || [])
-      setTrades(tradesData || [])
     } catch (error) {
       console.error('Error loading data:', error)
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function deleteSubcontractor(e, subId, companyName) {
+    e.preventDefault() // Prevent navigation
+    e.stopPropagation()
+
+    if (!window.confirm(`Are you sure you want to delete "${companyName}"? This cannot be undone.`)) {
+      return
+    }
+
+    try {
+      const { error } = await supabase
+        .from('subcontractors')
+        .delete()
+        .eq('id', subId)
+
+      if (error) throw error
+
+      toast.success('Subcontractor deleted')
+      loadData()
+    } catch (error) {
+      console.error('Error deleting subcontractor:', error)
+      toast.error('Failed to delete subcontractor')
     }
   }
 
@@ -39,10 +60,10 @@ export default function Subcontractors() {
       sub.contact_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       sub.email?.toLowerCase().includes(searchTerm.toLowerCase())
 
-    const matchesTrade = tradeFilter === 'all' ||
-      sub.trades?.some(t => t.trade.id === tradeFilter)
+    const matchesPackageType = packageTypeFilter === 'all' ||
+      sub.package_types?.includes(packageTypeFilter)
 
-    return matchesSearch && matchesTrade
+    return matchesSearch && matchesPackageType
   })
 
   return (
@@ -83,13 +104,13 @@ export default function Subcontractors() {
           </div>
           <select
             className="input w-full sm:w-56"
-            value={tradeFilter}
-            onChange={(e) => setTradeFilter(e.target.value)}
+            value={packageTypeFilter}
+            onChange={(e) => setPackageTypeFilter(e.target.value)}
           >
-            <option value="all">All Trades</option>
-            {trades.map(trade => (
-              <option key={trade.id} value={trade.id}>
-                {trade.division_code} - {trade.name}
+            <option value="all">All Package Types</option>
+            {BID_PACKAGE_TYPES.map(pkgType => (
+              <option key={pkgType.id} value={pkgType.id}>
+                {pkgType.name}
               </option>
             ))}
           </select>
@@ -113,69 +134,77 @@ export default function Subcontractors() {
       ) : filteredSubs.length > 0 ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filteredSubs.map((sub) => (
-            <Link
-              key={sub.id}
-              to={`/subcontractors/${sub.id}`}
-              className="card p-5 hover:shadow-md transition-shadow"
-            >
-              <div className="flex items-start justify-between mb-3">
-                <div className="p-2 bg-purple-100 rounded-lg">
-                  <Users className="h-5 w-5 text-purple-600" />
+            <div key={sub.id} className="card p-5 hover:shadow-md transition-shadow relative">
+              <Link to={`/subcontractors/${sub.id}`} className="block">
+                <div className="flex items-start justify-between mb-3">
+                  <div className="p-2 bg-purple-100 rounded-lg">
+                    <Users className="h-5 w-5 text-purple-600" />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {sub.is_preferred && (
+                      <span className="badge badge-success">Preferred</span>
+                    )}
+                    {sub.rating && (
+                      <div className="flex items-center gap-1 text-yellow-500">
+                        <Star className="h-4 w-4 fill-current" />
+                        <span className="text-sm font-medium">{sub.rating}</span>
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  {sub.is_preferred && (
-                    <span className="badge badge-success">Preferred</span>
+
+                <h3 className="font-semibold text-gray-900 mb-1">{sub.company_name}</h3>
+                {sub.contact_name && (
+                  <p className="text-sm text-gray-600 mb-3">{sub.contact_name}</p>
+                )}
+
+                <div className="space-y-1.5 text-sm">
+                  {sub.phone && (
+                    <div className="flex items-center gap-2 text-gray-600">
+                      <Phone className="h-4 w-4" />
+                      <span>{sub.phone}</span>
+                    </div>
                   )}
-                  {sub.rating && (
-                    <div className="flex items-center gap-1 text-yellow-500">
-                      <Star className="h-4 w-4 fill-current" />
-                      <span className="text-sm font-medium">{sub.rating}</span>
+                  {sub.email && (
+                    <div className="flex items-center gap-2 text-gray-600">
+                      <Mail className="h-4 w-4" />
+                      <span className="truncate">{sub.email}</span>
+                    </div>
+                  )}
+                  {sub.city && (
+                    <div className="flex items-center gap-2 text-gray-600">
+                      <MapPin className="h-4 w-4" />
+                      <span>{sub.city}, {sub.state}</span>
                     </div>
                   )}
                 </div>
-              </div>
 
-              <h3 className="font-semibold text-gray-900 mb-1">{sub.company_name}</h3>
-              {sub.contact_name && (
-                <p className="text-sm text-gray-600 mb-3">{sub.contact_name}</p>
-              )}
-
-              <div className="space-y-1.5 text-sm">
-                {sub.phone && (
-                  <div className="flex items-center gap-2 text-gray-600">
-                    <Phone className="h-4 w-4" />
-                    <span>{sub.phone}</span>
+                {sub.package_types?.length > 0 && (
+                  <div className="mt-3 flex flex-wrap gap-1">
+                    {sub.package_types.slice(0, 3).map(typeId => {
+                      const pkgType = getPackageType(typeId)
+                      return pkgType ? (
+                        <span key={typeId} className="badge bg-primary-100 text-primary-700 text-xs">
+                          {pkgType.name}
+                        </span>
+                      ) : null
+                    })}
+                    {sub.package_types.length > 3 && (
+                      <span className="badge bg-gray-100 text-gray-700 text-xs">
+                        +{sub.package_types.length - 3}
+                      </span>
+                    )}
                   </div>
                 )}
-                {sub.email && (
-                  <div className="flex items-center gap-2 text-gray-600">
-                    <Mail className="h-4 w-4" />
-                    <span className="truncate">{sub.email}</span>
-                  </div>
-                )}
-                {sub.city && (
-                  <div className="flex items-center gap-2 text-gray-600">
-                    <MapPin className="h-4 w-4" />
-                    <span>{sub.city}, {sub.state}</span>
-                  </div>
-                )}
-              </div>
-
-              {sub.trades?.length > 0 && (
-                <div className="mt-3 flex flex-wrap gap-1">
-                  {sub.trades.slice(0, 3).map(({ trade }) => (
-                    <span key={trade.id} className="badge bg-gray-100 text-gray-700 text-xs">
-                      {trade.division_code}
-                    </span>
-                  ))}
-                  {sub.trades.length > 3 && (
-                    <span className="badge bg-gray-100 text-gray-700 text-xs">
-                      +{sub.trades.length - 3}
-                    </span>
-                  )}
-                </div>
-              )}
-            </Link>
+              </Link>
+              <button
+                onClick={(e) => deleteSubcontractor(e, sub.id, sub.company_name)}
+                className="absolute top-3 right-3 p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                title="Delete subcontractor"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </div>
           ))}
         </div>
       ) : (
@@ -196,7 +225,6 @@ export default function Subcontractors() {
       {/* Bulk Upload Modal */}
       {showBulkUpload && (
         <SubcontractorBulkUpload
-          trades={trades}
           onClose={() => setShowBulkUpload(false)}
           onSuccess={() => {
             setShowBulkUpload(false)
