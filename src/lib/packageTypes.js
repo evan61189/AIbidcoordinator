@@ -30,9 +30,15 @@ export const BID_PACKAGE_TYPES = [
   { id: 'painting', name: 'Painting', description: 'Paint, stain, wall coverings, coatings' },
   { id: 'flooring', name: 'Flooring', description: 'Carpet, VCT, LVT, rubber, tile, wood, epoxy, base' },
   { id: 'window_treatments', name: 'Window Treatments', description: 'Blinds, shades, curtains, interior sun control' },
-  { id: 'specialties', name: 'Specialties', description: 'Toilet partitions, accessories, lockers, signage' },
+
+  // Specialties (separate packages for specific items)
+  { id: 'signage', name: 'Signage', description: 'Interior signage, exterior signage, wayfinding, ADA signs, room signs' },
+  { id: 'bathroom_accessories', name: 'Bathroom Accessories/Partitions', description: 'Toilet partitions, grab bars, mirrors, dispensers, bathroom accessories' },
+  { id: 'fire_extinguishers', name: 'Fire Extinguishers/Cabinets', description: 'Fire extinguishers, fire extinguisher cabinets, mounting brackets' },
+  { id: 'specialties', name: 'Specialties', description: 'Lockers, corner guards, wall protection, misc specialties' },
 
   // Equipment
+  { id: 'laboratory', name: 'Laboratory Casework/Equipment', description: 'Lab casework, fume hoods, lab benches, lab equipment, lab fixtures' },
   { id: 'equipment', name: 'Equipment', description: 'Appliances, kitchen equipment, food service, laundry' },
   { id: 'conveying', name: 'Conveying', description: 'Elevators, lifts, escalators, dumbwaiters' },
 
