@@ -4,43 +4,153 @@ const anthropic = new Anthropic()
 
 /**
  * AI-powered bid package analysis
- * Analyzes submitted bids to detect common trade pairings and suggest scope packages
- * Example: Framing (06) + Drywall (09) + Insulation (07) often bid together
+ * Uses construction industry knowledge to suggest how bid items should be grouped
+ * for subcontractor invitations BEFORE bids are received.
+ *
+ * Common subcontractor groupings in commercial construction:
+ * - Drywall Sub: Metal framing, wall insulation, drywall, acoustical ceilings, acoustical sealants
+ * - Electrical Sub: Power distribution, lighting, low voltage, fire alarm (sometimes separate)
+ * - Plumbing Sub: Plumbing fixtures, piping, sometimes med gas
+ * - HVAC Sub: Heating, ventilation, AC, controls, ductwork insulation
+ * - Concrete Sub: Foundations, slabs, tilt-up, precast
+ * - Roofing Sub: Roofing, flashing, sometimes waterproofing
+ * - Glazing Sub: Windows, storefronts, curtain wall, skylights
+ * - Painting Sub: Painting, wall coverings, specialty coatings
+ * - Flooring Sub: Carpet, VCT, tile, wood flooring, polished concrete
+ * - Fire Protection Sub: Sprinklers, standpipes (often separate from electrical fire alarm)
  */
+
+const INDUSTRY_KNOWLEDGE = `
+COMMON SUBCONTRACTOR TRADE GROUPINGS IN COMMERCIAL CONSTRUCTION:
+
+1. DRYWALL/INTERIOR SYSTEMS SUBCONTRACTOR
+   - Metal stud framing (light gauge steel framing)
+   - Drywall/gypsum board
+   - Wall insulation (batt insulation in wall cavities)
+   - Acoustical ceilings (suspended ceiling systems, ACT)
+   - Acoustical ceiling framing/grid
+   - Acoustical sealants and firestopping
+   - Shaft wall systems
+   - Sometimes includes: FRP panels, wall protection
+
+2. ELECTRICAL SUBCONTRACTOR
+   - Power distribution and wiring
+   - Lighting fixtures and controls
+   - Low voltage systems (data/voice cabling)
+   - Fire alarm systems (detection, notification - NOT sprinklers)
+   - Security rough-in
+   - Sometimes separate: Low voltage/data (specialty sub)
+   - Sometimes separate: Fire alarm (specialty sub)
+
+3. PLUMBING SUBCONTRACTOR
+   - Plumbing fixtures (toilets, sinks, etc.)
+   - Domestic water piping
+   - Sanitary/waste piping
+   - Storm drainage
+   - Gas piping
+   - Sometimes includes: Medical gas systems
+
+4. HVAC/MECHANICAL SUBCONTRACTOR
+   - HVAC equipment (RTUs, split systems, chillers)
+   - Ductwork
+   - Duct insulation
+   - Controls/BAS
+   - Piping (hydronic)
+   - Testing and balancing
+   - Sometimes includes: Kitchen exhaust hoods
+
+5. CONCRETE SUBCONTRACTOR
+   - Foundations
+   - Slab on grade
+   - Elevated slabs
+   - Tilt-up panels
+   - Site concrete (sidewalks, curbs)
+   - Reinforcing steel (sometimes separate)
+
+6. STRUCTURAL STEEL/METALS SUBCONTRACTOR
+   - Structural steel
+   - Metal decking
+   - Miscellaneous metals (stairs, railings, ladders)
+   - Ornamental metals (sometimes separate)
+
+7. ROOFING SUBCONTRACTOR
+   - Roofing membrane/system
+   - Roof insulation
+   - Flashings
+   - Sheet metal (gutters, downspouts)
+   - Sometimes includes: Waterproofing, air barriers
+
+8. GLAZING SUBCONTRACTOR
+   - Windows
+   - Storefronts
+   - Curtain wall
+   - Skylights
+   - Glass and glazing
+   - Entrance doors (aluminum)
+
+9. PAINTING SUBCONTRACTOR
+   - Interior painting
+   - Exterior painting
+   - Staining
+   - Wall coverings
+   - Specialty coatings
+   - Sometimes includes: Caulking/sealants
+
+10. FLOORING SUBCONTRACTOR
+    - Carpet
+    - VCT (vinyl composition tile)
+    - LVT (luxury vinyl tile)
+    - Ceramic/porcelain tile
+    - Wood flooring
+    - Polished concrete
+    - Epoxy flooring
+    - Rubber/resilient flooring
+
+11. FIRE PROTECTION/SPRINKLER SUBCONTRACTOR
+    - Fire sprinkler systems
+    - Standpipes
+    - Fire pumps
+    - Note: SEPARATE from fire alarm (electrical)
+
+12. MASONRY SUBCONTRACTOR
+    - CMU (concrete masonry units)
+    - Brick veneer
+    - Stone veneer
+    - Sometimes includes: Rough stone, pavers
+
+13. SITEWORK/EARTHWORK SUBCONTRACTOR
+    - Excavation
+    - Grading
+    - Utilities (underground)
+    - Paving (asphalt, concrete)
+    - Landscaping (sometimes separate)
+
+14. DOORS/FRAMES/HARDWARE SUBCONTRACTOR
+    - Hollow metal frames
+    - Wood doors
+    - Hardware (hinges, locksets, closers)
+    - Specialty doors (sometimes separate)
+
+15. SPECIALTIES (often separate small packages)
+    - Toilet accessories
+    - Signage
+    - Fire extinguishers/cabinets
+    - Lockers
+    - Corner guards/wall protection
+`
+
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: 'Method not allowed' }
   }
 
   try {
-    const { bids, bidItems } = JSON.parse(event.body)
+    const { bidItems, bids } = JSON.parse(event.body)
 
-    if (!bids || !bidItems) {
+    if (!bidItems || bidItems.length === 0) {
       return {
         statusCode: 400,
-        body: JSON.stringify({ error: 'Missing bids or bidItems' })
-      }
-    }
-
-    // Analyze which subcontractors bid on which items together
-    const subBidPatterns = {}
-    for (const bid of bids) {
-      if (bid.status !== 'submitted' || !bid.subcontractor?.id) continue
-
-      const subId = bid.subcontractor.id
-      const subName = bid.subcontractor.company_name
-
-      if (!subBidPatterns[subId]) {
-        subBidPatterns[subId] = {
-          name: subName,
-          bidItemIds: new Set(),
-          trades: new Set()
-        }
-      }
-
-      subBidPatterns[subId].bidItemIds.add(bid.bid_item?.id)
-      if (bid.bid_item?.trade) {
-        subBidPatterns[subId].trades.add(bid.bid_item.trade.division_code + ' - ' + bid.bid_item.trade.name)
+        body: JSON.stringify({ error: 'No bid items provided' })
       }
     }
 
@@ -49,52 +159,75 @@ exports.handler = async (event) => {
       id: item.id,
       description: item.description,
       trade: item.trade ? `${item.trade.division_code} - ${item.trade.name}` : 'Unknown',
-      tradeCode: item.trade?.division_code
+      tradeCode: item.trade?.division_code,
+      tradeName: item.trade?.name
     }))
 
-    const subPatternsList = Object.entries(subBidPatterns).map(([id, data]) => ({
-      subcontractor: data.name,
-      trades: [...data.trades],
-      itemCount: data.bidItemIds.size
-    }))
+    // If we have existing bids, include that info as supplementary
+    let bidPatternContext = ''
+    if (bids && bids.length > 0) {
+      const subBidPatterns = {}
+      for (const bid of bids) {
+        if (bid.status !== 'submitted' || !bid.subcontractor?.id) continue
+        const subId = bid.subcontractor.id
+        const subName = bid.subcontractor.company_name
+        if (!subBidPatterns[subId]) {
+          subBidPatterns[subId] = { name: subName, trades: new Set() }
+        }
+        if (bid.bid_item?.trade) {
+          subBidPatterns[subId].trades.add(bid.bid_item.trade.name)
+        }
+      }
+      const patterns = Object.values(subBidPatterns).map(s => ({
+        sub: s.name,
+        trades: [...s.trades]
+      }))
+      if (patterns.length > 0) {
+        bidPatternContext = `\n\nEXISTING BID PATTERNS (subcontractors who have already bid together):\n${JSON.stringify(patterns, null, 2)}`
+      }
+    }
 
-    const prompt = `You are an expert construction estimator. Analyze these bid items and subcontractor bidding patterns to suggest logical scope packages.
+    const prompt = `You are an expert commercial construction estimator with deep knowledge of how subcontractors typically bundle their work.
 
-BID ITEMS:
+YOUR TASK: Analyze the bid items below and group them into logical "bid packages" based on how subcontractors in the real world would typically bid this work together.
+
+${INDUSTRY_KNOWLEDGE}
+
+BID ITEMS TO ANALYZE:
 ${JSON.stringify(bidItemDescriptions, null, 2)}
+${bidPatternContext}
 
-SUBCONTRACTOR BIDDING PATTERNS (who bid on what together):
-${JSON.stringify(subPatternsList, null, 2)}
-
-Based on:
-1. Common construction trade pairings (e.g., framing/drywall/insulation, electrical/low voltage, plumbing/HVAC)
-2. Which subcontractors bid multiple items together
-3. CSI division groupings that make sense for customer presentation
-
-Suggest scope packages. Each package should group items that are commonly bid together or logically belong together for customer pricing.
+INSTRUCTIONS:
+1. Group bid items based on which subcontractor trade would typically bid them together
+2. Use the industry knowledge above - a "Drywall Sub" typically includes metal framing, insulation, drywall, AND acoustical ceilings
+3. Create packages named after the subcontractor type (e.g., "Drywall Package", "Electrical Package")
+4. Items that don't fit common groupings can remain ungrouped or be in small specialty packages
+5. Consider local market norms - some items could go either way (e.g., low voltage might be with electrical or separate)
 
 IMPORTANT: Return ONLY valid JSON in this exact format, no other text:
 {
   "packages": [
     {
-      "name": "Package Name (e.g., Interior Wall Systems)",
-      "description": "Brief description for customers",
-      "bidItemIds": ["uuid1", "uuid2"],
-      "reasoning": "Why these items are grouped"
+      "name": "Drywall & Acoustical Package",
+      "subcontractorType": "Drywall/Interior Systems Subcontractor",
+      "description": "Interior wall and ceiling systems",
+      "bidItemIds": ["uuid1", "uuid2", "uuid3"],
+      "reasoning": "Metal framing, drywall, insulation, and acoustical ceilings are typically bid together by drywall contractors"
     }
   ],
-  "ungroupedItems": ["uuid3"],
+  "ungroupedItems": ["uuid-for-specialty-item"],
   "customerDivisions": [
     {
-      "divisionCode": "06",
-      "divisionName": "Wood, Plastics, and Composites",
-      "displayName": "Framing & Carpentry",
-      "bidItemIds": ["uuid1"]
+      "divisionCode": "09",
+      "divisionName": "Finishes",
+      "displayName": "Interior Finishes",
+      "bidItemIds": ["uuid1", "uuid2"]
     }
-  ]
+  ],
+  "notes": "Any special considerations or alternative grouping suggestions"
 }
 
-The customerDivisions should provide customer-friendly names for each CSI division that has bid items.`
+Focus on creating packages that match how subcontractors actually bid work, not just CSI division groupings.`
 
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
@@ -117,8 +250,7 @@ The customerDivisions should provide customer-friendly names for each CSI divisi
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         success: true,
-        analysis,
-        subPatterns: subPatternsList
+        analysis
       })
     }
 

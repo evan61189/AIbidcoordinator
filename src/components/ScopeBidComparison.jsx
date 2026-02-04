@@ -65,7 +65,8 @@ export default function ScopeBidComparison({ projectId, bidItems = [] }) {
   }
 
   /**
-   * Use AI to analyze bid patterns and suggest scope packages
+   * Use AI to analyze bid items and suggest scope packages
+   * Based on industry knowledge of how subcontractors typically bundle work
    */
   async function analyzeWithAI() {
     if (bidItems.length === 0) {
@@ -78,7 +79,7 @@ export default function ScopeBidComparison({ projectId, bidItems = [] }) {
       const response = await fetch('/.netlify/functions/analyze-bid-packages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bids, bidItems })
+        body: JSON.stringify({ bidItems, bids })
       })
 
       const result = await response.json()
@@ -88,10 +89,10 @@ export default function ScopeBidComparison({ projectId, bidItems = [] }) {
       }
 
       setAiSuggestions(result.analysis)
-      toast.success(`AI found ${result.analysis.packages?.length || 0} suggested packages`)
+      toast.success(`AI suggested ${result.analysis.packages?.length || 0} bid packages based on industry knowledge`)
     } catch (error) {
       console.error('Error analyzing:', error)
-      toast.error('Failed to analyze bid patterns')
+      toast.error('Failed to analyze bid items')
     } finally {
       setAnalyzing(false)
     }
@@ -362,8 +363,15 @@ export default function ScopeBidComparison({ projectId, bidItems = [] }) {
             {aiSuggestions.packages.map((suggestion, idx) => (
               <div key={idx} className="bg-white p-3 rounded-lg border border-indigo-200 flex items-start justify-between">
                 <div className="flex-1">
-                  <div className="font-medium text-gray-900">{suggestion.name}</div>
-                  <div className="text-sm text-gray-600">{suggestion.description}</div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-gray-900">{suggestion.name}</span>
+                    {suggestion.subcontractorType && (
+                      <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded">
+                        {suggestion.subcontractorType}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-sm text-gray-600 mt-1">{suggestion.description}</div>
                   <div className="text-xs text-gray-500 mt-1">
                     {suggestion.bidItemIds?.length || 0} items • {suggestion.reasoning}
                   </div>
@@ -382,8 +390,10 @@ export default function ScopeBidComparison({ projectId, bidItems = [] }) {
 
       {/* Help Text */}
       <div className="px-6 py-3 bg-purple-50 border-b text-sm text-purple-800">
-        <strong>Tip:</strong> Use "AI Auto-Generate" to automatically detect common trade pairings from bid patterns,
-        or manually create packages. View the "Customer Proposal" for a clean division-by-division breakdown.
+        <strong>Tip:</strong> Use "AI Auto-Generate" to create bid packages based on how subcontractors typically
+        bundle work (e.g., a Drywall sub usually includes metal framing, insulation, drywall, AND acoustical ceilings).
+        These packages help you invite the right subs and compare bids accurately.
+      </div>
 
       {/* Packages List */}
       {scopePackages.length === 0 ? (
