@@ -579,3 +579,46 @@ export async function fetchApprovedPackageBidsForProject(projectId) {
   if (error) throw error
   return data
 }
+
+// ============================================
+// BID INVITATIONS - For tracking sent invitations
+// ============================================
+
+export async function fetchBidInvitations(status = null, projectId = null) {
+  let query = supabase
+    .from('bid_invitations')
+    .select(`
+      *,
+      project:projects (id, name),
+      subcontractor:subcontractors (id, company_name, contact_name, email)
+    `)
+    .order('sent_at', { ascending: false })
+
+  if (status && status !== 'all') {
+    query = query.eq('status', status)
+  }
+
+  if (projectId) {
+    query = query.eq('project_id', projectId)
+  }
+
+  const { data, error } = await query
+  if (error) throw error
+  return data
+}
+
+export async function fetchPendingInvitations() {
+  // Fetch invitations that haven't received a reply yet
+  const { data, error } = await supabase
+    .from('bid_invitations')
+    .select(`
+      *,
+      project:projects (id, name),
+      subcontractor:subcontractors (id, company_name, contact_name, email)
+    `)
+    .in('status', ['sent', 'delivered', 'opened'])
+    .order('sent_at', { ascending: false })
+
+  if (error) throw error
+  return data
+}
