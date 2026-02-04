@@ -305,7 +305,7 @@ Return ONLY valid JSON in this exact format:
     try {
       // Use Haiku for faster response times (typically 2-5 seconds vs 15-30 for Sonnet)
       response = await anthropic.messages.create({
-        model: 'claude-3-5-haiku-20241022',
+        model: 'claude-3-haiku-20240307',
         max_tokens: 4096,
         messages: [{ role: 'user', content: prompt }]
       })
