@@ -1,7 +1,5 @@
 const Anthropic = require('@anthropic-ai/sdk').default
 
-const anthropic = new Anthropic()
-
 /**
  * AI-powered bid package analysis
  * Uses construction industry knowledge to suggest how bid items should be grouped
@@ -339,8 +337,13 @@ Focus on creating packages that match how subcontractors actually bid work, not 
 
     // Check for API key
     if (!process.env.ANTHROPIC_API_KEY) {
-      throw new Error('ANTHROPIC_API_KEY not configured')
+      throw new Error('ANTHROPIC_API_KEY not configured. Add it in Netlify site settings.')
     }
+
+    // Initialize Anthropic client inside handler to ensure env vars are available
+    const anthropic = new Anthropic({
+      apiKey: process.env.ANTHROPIC_API_KEY
+    })
 
     const response = await anthropic.messages.create({
       model: 'claude-3-5-sonnet-20241022',
@@ -371,7 +374,11 @@ Focus on creating packages that match how subcontractors actually bid work, not 
     console.error('Error analyzing bid packages:', error)
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: error.message })
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        error: error.message,
+        details: error.status ? `API Status: ${error.status}` : undefined
+      })
     }
   }
 }

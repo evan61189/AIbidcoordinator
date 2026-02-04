@@ -154,7 +154,7 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
       toast.success(`AI suggested ${result.analysis.packages?.length || 0} bid packages`)
     } catch (error) {
       console.error('Error analyzing:', error)
-      toast.error('Failed to analyze bid items')
+      toast.error(error.message || 'Failed to analyze bid items')
     } finally {
       setAnalyzing(false)
     }
