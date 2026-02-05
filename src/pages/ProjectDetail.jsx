@@ -518,7 +518,7 @@ function AddBidItemModal({ projectId, trades, bidDate, onClose, onSuccess }) {
   )
 }
 
-function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose, onSuccess }) {
+function InviteSubsModal({ projectId, bidItems: bidItemsProp, subcontractors, project, onClose, onSuccess }) {
   const [step, setStep] = useState(1) // 1: Review Bid Packages, 2: Select Subs, 3: Review & Send
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedPackages, setSelectedPackages] = useState([]) // Package IDs to invite
@@ -533,11 +533,17 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
   const [loadingPackages, setLoadingPackages] = useState(true)
   // Track item assignments - maps item ID to package ID (allows moving)
   const [itemAssignments, setItemAssignments] = useState({})
+  // Fresh bid items loaded from database (not from stale prop)
+  const [bidItems, setBidItems] = useState([])
 
-  // Load scope packages and drawings for this project
+  // Load scope packages, drawings, and fresh bid items for this project
   useEffect(() => {
     async function loadData() {
       try {
+        // Load fresh bid items from database (not from stale prop)
+        const freshBidItems = await fetchProjectBidItems(projectId)
+        setBidItems(freshBidItems || [])
+
         // Load scope packages
         const allPackages = await fetchScopePackages(projectId)
 
