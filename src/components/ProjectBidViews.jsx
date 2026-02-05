@@ -410,9 +410,10 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
     setItemActionLoading(itemId)
     try {
       await updateBidItem(itemId, { trade_id: newTradeId })
-      toast.success('Item moved to new division')
+      toast.success('Item moved to new division and removed from packages')
       setEditingBidItem(null)
       if (onRefresh) onRefresh() // Refresh parent to update bidItems
+      loadData() // Refresh packages to show item as unassigned
     } catch (error) {
       console.error('Error moving item:', error)
       toast.error('Failed to move item')

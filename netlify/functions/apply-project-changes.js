@@ -272,6 +272,12 @@ async function moveBidItem(supabase, details) {
     .eq('id', trade_id)
     .single()
 
+  // Remove from current scope packages - item needs to be re-assigned to correct package
+  await supabase
+    .from('scope_package_items')
+    .delete()
+    .eq('bid_item_id', bid_item_id)
+
   const { data, error } = await supabase
     .from('bid_items')
     .update({
@@ -286,7 +292,8 @@ async function moveBidItem(supabase, details) {
 
   return {
     moved: data,
-    new_division: trade ? `${trade.division_code} - ${trade.name}` : trade_id
+    new_division: trade ? `${trade.division_code} - ${trade.name}` : trade_id,
+    removed_from_packages: true
   }
 }
 
