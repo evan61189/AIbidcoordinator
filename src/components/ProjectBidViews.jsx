@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { supabase, fetchScopePackages, createScopePackage, updateScopePackage, deleteScopePackage, fetchApprovedPackageBidsForProject } from '../lib/supabase'
+import { supabase, fetchScopePackages, createScopePackage, updateScopePackage, deleteScopePackage, fetchApprovedPackageBidsForProject, fetchTrades, updateBidItem, deleteBidItem } from '../lib/supabase'
 import {
   Package,
   Layers,
@@ -19,7 +19,8 @@ import {
   Percent,
   ArrowRight,
   Users,
-  AlertTriangle
+  AlertTriangle,
+  MoveHorizontal
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -44,6 +45,11 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
   const [expandedPackages, setExpandedPackages] = useState({})
   const [expandedDivisions, setExpandedDivisions] = useState({})
 
+  // Division view - bid item management
+  const [trades, setTrades] = useState([])
+  const [editingBidItem, setEditingBidItem] = useState(null) // For move modal
+  const [itemActionLoading, setItemActionLoading] = useState(null) // itemId being acted on
+
   // Client view state
   const [selectedBids, setSelectedBids] = useState({}) // bidItemId -> bid
   const [manualAmounts, setManualAmounts] = useState({}) // bidItemId -> manual amount (for items without bids)
@@ -65,6 +71,14 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
       // Load scope packages (returns empty array if table doesn't exist)
       const packagesData = await fetchScopePackages(projectId)
       setScopePackages(packagesData || [])
+
+      // Load all trades for the move dropdown
+      try {
+        const tradesData = await fetchTrades()
+        setTrades(tradesData || [])
+      } catch (e) {
+        console.warn('Could not load trades:', e.message)
+      }
 
       // Load submitted bids (item-level)
       let projectBids = []
@@ -388,6 +402,42 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
 
   function toggleDivision(divCode) {
     setExpandedDivisions(prev => ({ ...prev, [divCode]: !prev[divCode] }))
+  }
+
+  // Move a bid item to a different trade/division
+  async function handleMoveBidItem(itemId, newTradeId) {
+    if (itemActionLoading) return
+    setItemActionLoading(itemId)
+    try {
+      await updateBidItem(itemId, { trade_id: newTradeId })
+      toast.success('Item moved to new division')
+      setEditingBidItem(null)
+      if (onRefresh) onRefresh() // Refresh parent to update bidItems
+    } catch (error) {
+      console.error('Error moving item:', error)
+      toast.error('Failed to move item')
+    } finally {
+      setItemActionLoading(null)
+    }
+  }
+
+  // Delete a bid item
+  async function handleDeleteBidItem(item) {
+    if (itemActionLoading) return
+    if (!confirm(`Delete "${item.description}"? This will also remove it from any bid packages.`)) return
+
+    setItemActionLoading(item.id)
+    try {
+      await deleteBidItem(item.id)
+      toast.success('Bid item deleted')
+      if (onRefresh) onRefresh() // Refresh parent to update bidItems
+      loadData() // Refresh packages in case item was in one
+    } catch (error) {
+      console.error('Error deleting item:', error)
+      toast.error('Failed to delete item')
+    } finally {
+      setItemActionLoading(null)
+    }
   }
 
   // ==================== CLIENT VIEW HELPERS ====================
@@ -794,14 +844,16 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
                         <tr className="bg-gray-50 text-gray-600">
                           <th className="text-left p-3">Item</th>
                           <th className="text-left p-3 w-40">Low Bid / Source</th>
-                          <th className="text-right p-3 w-36">Amount</th>
+                          <th className="text-right p-3 w-32">Amount</th>
+                          <th className="text-center p-3 w-24">Actions</th>
                         </tr>
                       </thead>
                       <tbody>
                         {division.items.map(item => {
                           const hasBid = item.selectedBid?.amount > 0
+                          const isLoading = itemActionLoading === item.id
                           return (
-                            <tr key={item.id} className="border-t">
+                            <tr key={item.id} className="border-t hover:bg-gray-50">
                               <td className="p-3">{item.description}</td>
                               <td className="p-3 text-gray-600">
                                 {hasBid ? item.selectedBid.subcontractor?.company_name : (
@@ -823,6 +875,30 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
                                     />
                                   </div>
                                 )}
+                              </td>
+                              <td className="p-3 text-center">
+                                <div className="flex items-center justify-center gap-1">
+                                  <button
+                                    onClick={() => setEditingBidItem(item)}
+                                    disabled={isLoading}
+                                    className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded disabled:opacity-50"
+                                    title="Move to different division"
+                                  >
+                                    <MoveHorizontal className="w-4 h-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteBidItem(item)}
+                                    disabled={isLoading}
+                                    className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded disabled:opacity-50"
+                                    title="Delete item"
+                                  >
+                                    {isLoading ? (
+                                      <RefreshCw className="w-4 h-4 animate-spin" />
+                                    ) : (
+                                      <Trash2 className="w-4 h-4" />
+                                    )}
+                                  </button>
+                                </div>
                               </td>
                             </tr>
                           )
@@ -1050,6 +1126,17 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
           onSuccess={() => { setEditingPackage(null); loadData() }}
         />
       )}
+
+      {/* Move Bid Item Modal */}
+      {editingBidItem && (
+        <MoveBidItemModal
+          item={editingBidItem}
+          trades={trades}
+          onClose={() => setEditingBidItem(null)}
+          onMove={handleMoveBidItem}
+          loading={itemActionLoading === editingBidItem.id}
+        />
+      )}
     </div>
   )
 }
@@ -1218,6 +1305,101 @@ function EditPackageModal({ pkg, bidItems, allPackages, onClose, onSuccess }) {
               <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
               <button type="submit" className="btn btn-primary" disabled={loading}>{loading ? 'Saving...' : 'Save'}</button>
             </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+function MoveBidItemModal({ item, trades, onClose, onMove, loading }) {
+  const [selectedTradeId, setSelectedTradeId] = useState(item.trade?.id || '')
+
+  // Group trades by division for easier navigation
+  const tradesByDivision = trades.reduce((acc, trade) => {
+    const div = trade.division_code || '00'
+    if (!acc[div]) acc[div] = []
+    acc[div].push(trade)
+    return acc
+  }, {})
+
+  const sortedDivisions = Object.keys(tradesByDivision).sort()
+
+  function handleSubmit(e) {
+    e.preventDefault()
+    if (!selectedTradeId || selectedTradeId === item.trade?.id) {
+      onClose()
+      return
+    }
+    onMove(item.id, selectedTradeId)
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
+        <div className="p-4 border-b flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Move Bid Item</h2>
+          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit}>
+          <div className="p-4 space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Item</label>
+              <p className="text-gray-900 bg-gray-50 p-2 rounded">{item.description}</p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Current Division</label>
+              <p className="text-gray-600 bg-gray-50 p-2 rounded">
+                {item.trade ? `${item.trade.division_code} - ${item.trade.name}` : 'Not assigned'}
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Move to Trade/Division</label>
+              <select
+                value={selectedTradeId}
+                onChange={(e) => setSelectedTradeId(e.target.value)}
+                className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+              >
+                <option value="">Select a trade...</option>
+                {sortedDivisions.map(div => (
+                  <optgroup key={div} label={`Division ${div}`}>
+                    {tradesByDivision[div].map(trade => (
+                      <option
+                        key={trade.id}
+                        value={trade.id}
+                        disabled={trade.id === item.trade?.id}
+                      >
+                        {trade.division_code} - {trade.name}
+                        {trade.id === item.trade?.id ? ' (current)' : ''}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="p-4 border-t flex justify-end gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={loading || !selectedTradeId || selectedTradeId === item.trade?.id}
+              className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {loading && <RefreshCw className="w-4 h-4 animate-spin" />}
+              {loading ? 'Moving...' : 'Move Item'}
+            </button>
           </div>
         </form>
       </div>

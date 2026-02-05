@@ -231,6 +231,37 @@ export async function createBidItem(bidItem) {
   return data
 }
 
+export async function updateBidItem(id, updates) {
+  const { data, error } = await supabase
+    .from('bid_items')
+    .update(updates)
+    .eq('id', id)
+    .select(`
+      *,
+      trade:trades (*)
+    `)
+    .single()
+
+  if (error) throw error
+  return data
+}
+
+export async function deleteBidItem(id) {
+  // First delete any scope_package_items referencing this bid item
+  await supabase
+    .from('scope_package_items')
+    .delete()
+    .eq('bid_item_id', id)
+
+  // Then delete the bid item itself
+  const { error } = await supabase
+    .from('bid_items')
+    .delete()
+    .eq('id', id)
+
+  if (error) throw error
+}
+
 export async function createBid(bid) {
   const { data, error } = await supabase
     .from('bids')
