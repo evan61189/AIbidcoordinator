@@ -8,9 +8,6 @@ import Subcontractors from './pages/Subcontractors'
 import SubcontractorDetail from './pages/SubcontractorDetail'
 import NewSubcontractor from './pages/NewSubcontractor'
 import Bids from './pages/Bids'
-import QuickBidEntry from './pages/QuickBidEntry'
-import Trades from './pages/Trades'
-import EmailParser from './pages/EmailParser'
 import CustomerProposal from './pages/CustomerProposal'
 
 function App() {
@@ -26,9 +23,6 @@ function App() {
         <Route path="subcontractors/new" element={<NewSubcontractor />} />
         <Route path="subcontractors/:id" element={<SubcontractorDetail />} />
         <Route path="bids" element={<Bids />} />
-        <Route path="bids/quick-entry" element={<QuickBidEntry />} />
-        <Route path="trades" element={<Trades />} />
-        <Route path="email-parser" element={<EmailParser />} />
       </Route>
     </Routes>
   )

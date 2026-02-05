@@ -12,7 +12,9 @@ export const supabase = createClient(
   supabaseAnonKey || 'placeholder-key'
 )
 
-// Helper functions for common database operations
+// ============================================
+// PROJECTS
+// ============================================
 
 export async function fetchProjects(status = null) {
   let query = supabase
@@ -46,51 +48,6 @@ export async function fetchProject(id) {
   return data
 }
 
-// Fetch bid items for a project - only from active rounds
-export async function fetchProjectBidItems(projectId) {
-  // First get active bid rounds for this project
-  const { data: rounds } = await supabase
-    .from('bid_rounds')
-    .select('id')
-    .eq('project_id', projectId)
-    .eq('status', 'active')
-
-  const activeRoundIds = rounds?.map(r => r.id) || []
-
-  if (activeRoundIds.length === 0) {
-    // No active rounds - return empty
-    return []
-  }
-
-  // Fetch bid items from active rounds only
-  const { data, error } = await supabase
-    .from('bid_items')
-    .select(`
-      *,
-      trade:trades (*),
-      bids (
-        *,
-        subcontractor:subcontractors (*)
-      )
-    `)
-    .eq('project_id', projectId)
-    .in('bid_round_id', activeRoundIds)
-    .order('item_number')
-
-  if (error) throw error
-  return data || []
-}
-
-// Delete all bid items for a project (cleanup orphans)
-export async function deleteAllProjectBidItems(projectId) {
-  const { error } = await supabase
-    .from('bid_items')
-    .delete()
-    .eq('project_id', projectId)
-
-  if (error) throw error
-}
-
 export async function createProject(project) {
   const { data, error } = await supabase
     .from('projects')
@@ -102,26 +59,9 @@ export async function createProject(project) {
   return data
 }
 
-export async function updateProject(id, updates) {
-  const { data, error } = await supabase
-    .from('projects')
-    .update(updates)
-    .eq('id', id)
-    .select()
-    .single()
-
-  if (error) throw error
-  return data
-}
-
-export async function deleteProject(id) {
-  const { error } = await supabase
-    .from('projects')
-    .delete()
-    .eq('id', id)
-
-  if (error) throw error
-}
+// ============================================
+// SUBCONTRACTORS
+// ============================================
 
 export async function fetchSubcontractors(activeOnly = true) {
   let query = supabase
@@ -168,7 +108,6 @@ export async function fetchSubcontractor(id) {
 }
 
 export async function createSubcontractor(subcontractor) {
-  // package_types is stored directly on the subcontractors table as a text array
   const { data, error } = await supabase
     .from('subcontractors')
     .insert(subcontractor)
@@ -180,7 +119,6 @@ export async function createSubcontractor(subcontractor) {
 }
 
 export async function updateSubcontractor(id, updates) {
-  // package_types is stored directly on the subcontractors table as a text array
   const { data, error } = await supabase
     .from('subcontractors')
     .update(updates)
@@ -192,6 +130,10 @@ export async function updateSubcontractor(id, updates) {
   return data
 }
 
+// ============================================
+// TRADES
+// ============================================
+
 export async function fetchTrades() {
   const { data, error } = await supabase
     .from('trades')
@@ -202,7 +144,24 @@ export async function fetchTrades() {
   return data
 }
 
-export async function fetchBidItems(projectId) {
+// ============================================
+// BID ITEMS
+// ============================================
+
+export async function fetchProjectBidItems(projectId) {
+  // Get active bid rounds for this project
+  const { data: rounds } = await supabase
+    .from('bid_rounds')
+    .select('id')
+    .eq('project_id', projectId)
+    .eq('status', 'active')
+
+  const activeRoundIds = rounds?.map(r => r.id) || []
+
+  if (activeRoundIds.length === 0) {
+    return []
+  }
+
   const { data, error } = await supabase
     .from('bid_items')
     .select(`
@@ -214,10 +173,11 @@ export async function fetchBidItems(projectId) {
       )
     `)
     .eq('project_id', projectId)
+    .in('bid_round_id', activeRoundIds)
     .order('item_number')
 
   if (error) throw error
-  return data
+  return data || []
 }
 
 export async function createBidItem(bidItem) {
@@ -232,8 +192,7 @@ export async function createBidItem(bidItem) {
 }
 
 export async function updateBidItem(id, updates) {
-  // If changing trade/division, remove from scope packages so item can be re-assigned
-  // This prevents items from staying in mismatched packages after moving divisions
+  // If changing trade/division, remove from scope packages
   if (updates.trade_id) {
     await supabase
       .from('scope_package_items')
@@ -245,10 +204,7 @@ export async function updateBidItem(id, updates) {
     .from('bid_items')
     .update(updates)
     .eq('id', id)
-    .select(`
-      *,
-      trade:trades (*)
-    `)
+    .select(`*, trade:trades (*)`)
     .single()
 
   if (error) throw error
@@ -256,9 +212,7 @@ export async function updateBidItem(id, updates) {
 }
 
 export async function deleteBidItem(id) {
-  console.log('Deleting bid item:', id)
-
-  // Get which packages this item belongs to before deleting
+  // Get affected packages before deleting
   const { data: packageItems } = await supabase
     .from('scope_package_items')
     .select('scope_package_id')
@@ -266,66 +220,67 @@ export async function deleteBidItem(id) {
 
   const affectedPackageIds = packageItems?.map(p => p.scope_package_id) || []
 
-  // First delete any scope_package_items referencing this bid item
-  const { error: pkgError } = await supabase
-    .from('scope_package_items')
-    .delete()
-    .eq('bid_item_id', id)
+  // Delete from scope_package_items
+  await supabase.from('scope_package_items').delete().eq('bid_item_id', id)
 
-  if (pkgError) {
-    console.error('Error deleting scope_package_items:', pkgError)
-  }
+  // Delete associated bids
+  await supabase.from('bids').delete().eq('bid_item_id', id)
 
-  // Delete any bids associated with this item
-  const { error: bidsError } = await supabase
-    .from('bids')
-    .delete()
-    .eq('bid_item_id', id)
+  // Delete the bid item
+  const { error } = await supabase.from('bid_items').delete().eq('id', id)
+  if (error) throw error
 
-  if (bidsError) {
-    console.error('Error deleting bids:', bidsError)
-  }
-
-  // Then delete the bid item itself
-  const { error } = await supabase
-    .from('bid_items')
-    .delete()
-    .eq('id', id)
-
-  if (error) {
-    console.error('Error deleting bid_item:', error)
-    throw error
-  }
-
-  // Clean up any packages that are now empty
-  if (affectedPackageIds.length > 0) {
-    await cleanupEmptyPackages(affectedPackageIds)
-  }
-
-  console.log('Bid item deleted successfully:', id)
-}
-
-// Helper to delete packages that have no remaining items
-async function cleanupEmptyPackages(packageIds) {
-  for (const pkgId of packageIds) {
-    // Check if package still has any items
+  // Clean up empty packages
+  for (const pkgId of affectedPackageIds) {
     const { count } = await supabase
       .from('scope_package_items')
       .select('*', { count: 'exact', head: true })
       .eq('scope_package_id', pkgId)
 
     if (count === 0) {
-      console.log('Deleting empty package:', pkgId)
-      const { error } = await supabase
-        .from('scope_packages')
-        .delete()
-        .eq('id', pkgId)
-
-      if (error) {
-        console.error('Error deleting empty package:', error)
-      }
+      await supabase.from('scope_packages').delete().eq('id', pkgId)
     }
   }
+}
+
+export async function deleteAllProjectBidItems(projectId) {
+  const { error } = await supabase
+    .from('bid_items')
+    .delete()
+    .eq('project_id', projectId)
+
+  if (error) throw error
+}
+
+// ============================================
+// BIDS
+// ============================================
+
+export async function fetchBids(filters = {}) {
+  let query = supabase
+    .from('bids')
+    .select(`
+      *,
+      subcontractor:subcontractors (*),
+      bid_item:bid_items (
+        *,
+        project:projects (*),
+        trade:trades (*)
+      )
+    `)
+    .order('created_at', { ascending: false })
+
+  if (filters.status && filters.status !== 'all') {
+    query = query.eq('status', filters.status)
+  }
+
+  if (filters.projectId) {
+    query = query.eq('bid_item.project_id', filters.projectId)
+  }
+
+  const { data, error } = await query
+  if (error) throw error
+  return data
 }
 
 export async function createBid(bid) {
@@ -358,35 +313,30 @@ export async function deleteBids(ids) {
     .in('id', ids)
 
   if (error) throw error
-  return true
 }
 
-export async function fetchBids(filters = {}) {
-  let query = supabase
+export async function fetchBidsForLeveling(projectId) {
+  const { data, error } = await supabase
     .from('bids')
     .select(`
-      *,
-      subcontractor:subcontractors (*),
+      id, amount, notes, status, submitted_at,
+      subcontractor:subcontractors (id, company_name, contact_name, email),
       bid_item:bid_items (
-        *,
-        project:projects (*),
-        trade:trades (*)
+        id, description, item_number, project_id,
+        trade:trades (id, name, division_code)
       )
     `)
-    .order('created_at', { ascending: false })
+    .eq('bid_item.project_id', projectId)
+    .eq('status', 'submitted')
+    .order('submitted_at', { ascending: false })
 
-  if (filters.status && filters.status !== 'all') {
-    query = query.eq('status', filters.status)
-  }
-
-  if (filters.projectId) {
-    query = query.eq('bid_item.project_id', filters.projectId)
-  }
-
-  const { data, error } = await query
   if (error) throw error
-  return data
+  return (data || []).filter(b => b.bid_item)
 }
+
+// ============================================
+// DRAWINGS
+// ============================================
 
 export async function fetchDrawingsForProject(projectId) {
   const { data, error } = await supabase
@@ -400,33 +350,10 @@ export async function fetchDrawingsForProject(projectId) {
   return data
 }
 
-export async function logCommunication(communication) {
-  const { data, error } = await supabase
-    .from('communications')
-    .insert(communication)
-    .select()
-    .single()
+// ============================================
+// BID RESPONSES
+// ============================================
 
-  if (error) throw error
-  return data
-}
-
-export async function getDashboardStats() {
-  const [projects, bids, subcontractors] = await Promise.all([
-    supabase.from('projects').select('id, status'),
-    supabase.from('bids').select('id, status'),
-    supabase.from('subcontractors').select('id').eq('is_active', true)
-  ])
-
-  const activeProjects = projects.data?.filter(p => p.status === 'bidding').length || 0
-  const pendingBids = bids.data?.filter(b => b.status === 'invited').length || 0
-  const submittedBids = bids.data?.filter(b => b.status === 'submitted').length || 0
-  const totalSubcontractors = subcontractors.data?.length || 0
-
-  return { activeProjects, pendingBids, submittedBids, totalSubcontractors }
-}
-
-// Bid Responses (from parsed emails)
 export async function fetchBidResponses(status = null) {
   let query = supabase
     .from('bid_responses')
@@ -459,81 +386,38 @@ export async function updateBidResponse(id, updates) {
   return data
 }
 
-export async function approveBidResponse(bidResponseId, bidId) {
-  // Update the bid with the amount from the response
-  const { data: response } = await supabase
-    .from('bid_responses')
-    .select('total_amount, line_items')
-    .eq('id', bidResponseId)
-    .single()
-
-  if (response) {
-    // Update the bid record
-    await supabase
-      .from('bids')
-      .update({
-        amount: response.total_amount,
-        status: 'submitted',
-        submitted_at: new Date().toISOString()
-      })
-      .eq('id', bidId)
-
-    // Mark response as approved
-    await supabase
-      .from('bid_responses')
-      .update({
-        status: 'approved',
-        bid_id: bidId,
-        reviewed_at: new Date().toISOString()
-      })
-      .eq('id', bidResponseId)
-  }
-
-  return response
-}
-
 // ============================================
-// SCOPE PACKAGES - For bid leveling comparison
+// SCOPE PACKAGES
 // ============================================
 
 export async function fetchScopePackages(projectId) {
   const { data, error } = await supabase
     .from('scope_packages')
-    .select(`
-      *,
-      items:scope_package_items (
-        bid_item_id
-      )
-    `)
+    .select(`*, items:scope_package_items (bid_item_id)`)
     .eq('project_id', projectId)
     .order('created_at')
 
-  // Return empty array if table doesn't exist or other error
-  // This allows the app to work before migrations are run
   if (error) {
-    console.warn('scope_packages query failed (table may not exist):', error.message)
+    console.warn('scope_packages query failed:', error.message)
     return []
   }
   return data
 }
 
 export async function createScopePackage(projectId, name, description, bidItemIds = []) {
-  // Create the package
-  const { data: pkg, error: pkgError } = await supabase
+  const { data: pkg, error } = await supabase
     .from('scope_packages')
     .insert({ project_id: projectId, name, description })
     .select()
     .single()
 
-  if (pkgError) throw pkgError
+  if (error) throw error
 
-  // Add bid items to package
   if (bidItemIds.length > 0) {
     const links = bidItemIds.map(bidItemId => ({
       scope_package_id: pkg.id,
       bid_item_id: bidItemId
     }))
-
     await supabase.from('scope_package_items').insert(links)
   }
 
@@ -550,7 +434,6 @@ export async function updateScopePackage(id, updates, bidItemIds = null) {
 
   if (error) throw error
 
-  // Update bid item associations if provided
   if (bidItemIds !== null) {
     await supabase.from('scope_package_items').delete().eq('scope_package_id', id)
 
@@ -575,36 +458,8 @@ export async function deleteScopePackage(id) {
   if (error) throw error
 }
 
-export async function fetchBidsForLeveling(projectId) {
-  // Fetch all submitted bids for a project with their bid items and subcontractors
-  const { data, error } = await supabase
-    .from('bids')
-    .select(`
-      id,
-      amount,
-      notes,
-      status,
-      submitted_at,
-      subcontractor:subcontractors (id, company_name, contact_name, email),
-      bid_item:bid_items (
-        id,
-        description,
-        item_number,
-        trade:trades (id, name, division_code),
-        project_id
-      )
-    `)
-    .eq('bid_item.project_id', projectId)
-    .eq('status', 'submitted')
-    .order('submitted_at', { ascending: false })
-
-  if (error) throw error
-  // Filter out nulls from the join
-  return (data || []).filter(b => b.bid_item)
-}
-
 // ============================================
-// PACKAGE BIDS - For package-level bid management
+// PACKAGE BIDS
 // ============================================
 
 export async function fetchPackageBids(status = null, projectId = null) {
@@ -636,10 +491,7 @@ export async function fetchPackageBids(status = null, projectId = null) {
 export async function updatePackageBid(id, updates) {
   const { data, error } = await supabase
     .from('package_bids')
-    .update({
-      ...updates,
-      updated_at: new Date().toISOString()
-    })
+    .update({ ...updates, updated_at: new Date().toISOString() })
     .eq('id', id)
     .select()
     .single()
@@ -648,52 +500,29 @@ export async function updatePackageBid(id, updates) {
   return data
 }
 
-export async function approvePackageBid(packageBidId) {
-  const { data, error } = await supabase
-    .from('package_bids')
-    .update({
-      status: 'approved',
-      approved_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    })
-    .eq('id', packageBidId)
-    .select()
-    .single()
-
-  if (error) throw error
-  return data
+// Consolidated approve/reject into status update
+export async function approvePackageBid(id) {
+  return updatePackageBid(id, {
+    status: 'approved',
+    approved_at: new Date().toISOString()
+  })
 }
 
-export async function rejectPackageBid(packageBidId) {
-  const { data, error } = await supabase
-    .from('package_bids')
-    .update({
-      status: 'rejected',
-      updated_at: new Date().toISOString()
-    })
-    .eq('id', packageBidId)
-    .select()
-    .single()
-
-  if (error) throw error
-  return data
+export async function rejectPackageBid(id) {
+  return updatePackageBid(id, { status: 'rejected' })
 }
 
-// Fetch approved package bids for bid leveling views
 export async function fetchApprovedPackageBidsForProject(projectId) {
   const { data, error } = await supabase
     .from('package_bids')
     .select(`
       *,
       scope_package:scope_packages (
-        id,
-        name,
+        id, name,
         scope_package_items (
           bid_item_id,
           bid_item:bid_items (
-            id,
-            description,
-            item_number,
+            id, description, item_number,
             trade:trades (id, name, division_code)
           )
         )
@@ -709,34 +538,10 @@ export async function fetchApprovedPackageBidsForProject(projectId) {
 }
 
 // ============================================
-// BID INVITATIONS - For tracking sent invitations
+// BID INVITATIONS
 // ============================================
 
-export async function fetchBidInvitations(status = null, projectId = null) {
-  let query = supabase
-    .from('bid_invitations')
-    .select(`
-      *,
-      project:projects (id, name),
-      subcontractor:subcontractors (id, company_name, contact_name, email)
-    `)
-    .order('sent_at', { ascending: false })
-
-  if (status && status !== 'all') {
-    query = query.eq('status', status)
-  }
-
-  if (projectId) {
-    query = query.eq('project_id', projectId)
-  }
-
-  const { data, error } = await query
-  if (error) throw error
-  return data
-}
-
 export async function fetchPendingInvitations() {
-  // Fetch invitations that haven't received a reply yet
   const { data, error } = await supabase
     .from('bid_invitations')
     .select(`
@@ -749,4 +554,23 @@ export async function fetchPendingInvitations() {
 
   if (error) throw error
   return data
+}
+
+// ============================================
+// DASHBOARD
+// ============================================
+
+export async function getDashboardStats() {
+  const [projects, bids, subcontractors] = await Promise.all([
+    supabase.from('projects').select('id, status'),
+    supabase.from('bids').select('id, status'),
+    supabase.from('subcontractors').select('id').eq('is_active', true)
+  ])
+
+  return {
+    activeProjects: projects.data?.filter(p => p.status === 'bidding').length || 0,
+    pendingBids: bids.data?.filter(b => b.status === 'invited').length || 0,
+    submittedBids: bids.data?.filter(b => b.status === 'submitted').length || 0,
+    totalSubcontractors: subcontractors.data?.length || 0
+  }
 }
