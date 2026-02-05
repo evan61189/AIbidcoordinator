@@ -324,7 +324,7 @@ export default function ProjectDetail() {
       />
 
       {/* Bid Rounds - Manage pricing rounds and drawing versions */}
-      <BidRounds projectId={id} projectName={project?.name} />
+      <BidRounds projectId={id} projectName={project?.name} onRefresh={loadProject} />
 
       {/* Add Bid Item Modal */}
       {showAddItem && (
