@@ -314,9 +314,11 @@ export default function ProjectDetail() {
         bidItems={bidItems || []}
         onRefresh={loadProject}
         onAddBidItem={() => setShowAddItem(true)}
-        onInviteSubs={() => {
+        onInviteSubs={async () => {
+          // Refresh bidItems from database before opening modal
+          await loadProject()
           loadSubcontractors()
-          setInviteModalKey(k => k + 1) // Force fresh data load
+          setInviteModalKey(k => k + 1) // Force modal remount with fresh state
           setShowInviteModal(true)
         }}
       />
@@ -521,7 +523,7 @@ function AddBidItemModal({ projectId, trades, bidDate, onClose, onSuccess }) {
   )
 }
 
-function InviteSubsModal({ projectId, bidItems: bidItemsProp, subcontractors, project, onClose, onSuccess }) {
+function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose, onSuccess }) {
   const [step, setStep] = useState(1) // 1: Review Bid Packages, 2: Select Subs, 3: Review & Send
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedPackages, setSelectedPackages] = useState([]) // Package IDs to invite
@@ -534,20 +536,14 @@ function InviteSubsModal({ projectId, bidItems: bidItemsProp, subcontractors, pr
   const [useDrawingLinks, setUseDrawingLinks] = useState(false)
   const [scopePackages, setScopePackages] = useState([])
   const [loadingPackages, setLoadingPackages] = useState(true)
-  // Track item assignments - maps item ID to package ID (allows moving)
+  // Track item assignments - maps item ID to package ID (allows moving within modal)
   const [itemAssignments, setItemAssignments] = useState({})
-  // Fresh bid items loaded from database (not from stale prop)
-  const [bidItems, setBidItems] = useState([])
 
-  // Load scope packages, drawings, and fresh bid items for this project
+  // Load scope packages and drawings - bidItems comes from parent (single source of truth)
   useEffect(() => {
     async function loadData() {
       try {
-        // Load fresh bid items from database (not from stale prop)
-        const freshBidItems = await fetchProjectBidItems(projectId)
-        setBidItems(freshBidItems || [])
-
-        // Load scope packages
+        // Load scope packages (only contains bid_item_id references, not embedded data)
         const allPackages = await fetchScopePackages(projectId)
 
         // Deduplicate packages by name, keeping the one with the most items
@@ -563,12 +559,12 @@ function InviteSubsModal({ projectId, bidItems: bidItemsProp, subcontractors, pr
         const packages = Object.values(packagesByName)
         setScopePackages(packages)
 
-        // Build initial item assignments from packages
+        // Build initial item assignments from packages (using bid_item_id)
         const assignments = {}
         packages?.forEach(pkg => {
-          pkg.items?.forEach(({ bid_item }) => {
-            if (bid_item?.id) {
-              assignments[bid_item.id] = pkg.id
+          pkg.items?.forEach(item => {
+            if (item.bid_item_id) {
+              assignments[item.bid_item_id] = pkg.id
             }
           })
         })
@@ -584,7 +580,6 @@ function InviteSubsModal({ projectId, bidItems: bidItemsProp, subcontractors, pr
 
       try {
         // Load original PDF drawings only (not converted page images)
-        // Filter for file_type = 'pdf' to only show attachable PDFs
         const { data } = await supabase
           .from('drawings')
           .select('id, original_filename, drawing_number, title, discipline, file_size, storage_url, is_current, file_type')
@@ -594,21 +589,20 @@ function InviteSubsModal({ projectId, bidItems: bidItemsProp, subcontractors, pr
           .order('uploaded_at', { ascending: false })
 
         setDrawings(data || [])
-        // Auto-select all PDF drawings by default
         setSelectedDrawings((data || []).map(d => d.id))
       } catch (error) {
         console.error('Error loading drawings:', error)
       }
     }
     loadData()
-  }, []) // Empty dependency - reload fresh data every time modal mounts
+  }, [projectId])
 
-  // Get items for each package based on current assignments
+  // Get items for each package based on current assignments (uses bidItems from parent)
   const getPackageItems = (packageId) => {
     return bidItems.filter(item => itemAssignments[item.id] === packageId)
   }
 
-  // Get unassigned items
+  // Get unassigned items (items not in any package)
   const unassignedItems = bidItems.filter(item => !itemAssignments[item.id])
 
   // Move item to a different package

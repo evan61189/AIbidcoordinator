@@ -168,11 +168,18 @@ export default function ScopeBidComparison({ projectId, bidItems = [] }) {
     }))
   }
 
+  // Get bid items for a package using the single source of truth (bidItems prop)
+  function getPackageItems(pkg) {
+    const itemIds = new Set(pkg.items?.map(i => i.bid_item_id).filter(Boolean) || [])
+    return bidItems.filter(item => itemIds.has(item.id))
+  }
+
   /**
    * Calculate scope coverage and combinations for a package
    */
   function analyzePackage(pkg) {
-    const packageItemIds = new Set(pkg.items?.map(i => i.bid_item?.id).filter(Boolean) || [])
+    const packageItems = getPackageItems(pkg)
+    const packageItemIds = new Set(packageItems.map(i => i.id))
     if (packageItemIds.size === 0) return { coverage: [], combinations: [] }
 
     // Group bids by subcontractor
@@ -433,7 +440,7 @@ export default function ScopeBidComparison({ projectId, bidItems = [] }) {
                     <Layers className="w-4 h-4 text-purple-600" />
                     {pkg.name}
                     <span className="text-sm font-normal text-gray-500">
-                      ({pkg.items?.length || 0} items)
+                      ({getPackageItems(pkg).length} items)
                     </span>
                   </button>
                   <div className="flex items-center gap-3">
@@ -466,10 +473,10 @@ export default function ScopeBidComparison({ projectId, bidItems = [] }) {
                     <div className="bg-gray-50 p-3 rounded">
                       <div className="text-sm font-medium text-gray-700 mb-2">Package Includes:</div>
                       <div className="flex flex-wrap gap-2">
-                        {pkg.items?.map(({ bid_item }) => (
-                          <span key={bid_item?.id} className="px-2 py-1 bg-white border rounded text-sm">
-                            {bid_item?.trade?.division_code} - {bid_item?.description?.substring(0, 40)}
-                            {bid_item?.description?.length > 40 ? '...' : ''}
+                        {getPackageItems(pkg).map(item => (
+                          <span key={item.id} className="px-2 py-1 bg-white border rounded text-sm">
+                            {item.trade?.division_code} - {item.description?.substring(0, 40)}
+                            {item.description?.length > 40 ? '...' : ''}
                           </span>
                         ))}
                       </div>
@@ -525,7 +532,7 @@ export default function ScopeBidComparison({ projectId, bidItems = [] }) {
                                   ) : (
                                     <span className="inline-flex items-center gap-1 text-yellow-600">
                                       <AlertTriangle className="w-3 h-3" />
-                                      Partial ({sub.coveredItemIds.size}/{pkg.items?.length})
+                                      Partial ({sub.coveredItemIds.size}/{getPackageItems(pkg).length})
                                     </span>
                                   )}
                                 </td>
@@ -816,7 +823,7 @@ function EditPackageModal({ pkg, bidItems, allPackages, onClose, onSuccess }) {
   const [name, setName] = useState(pkg.name || '')
   const [description, setDescription] = useState(pkg.description || '')
   const [selectedItems, setSelectedItems] = useState(
-    pkg.items?.map(i => i.bid_item?.id).filter(Boolean) || []
+    pkg.items?.map(i => i.bid_item_id).filter(Boolean) || []
   )
   const [loading, setLoading] = useState(false)
   const [moveTarget, setMoveTarget] = useState(null) // { itemId, targetPackageId }
@@ -829,8 +836,8 @@ function EditPackageModal({ pkg, bidItems, allPackages, onClose, onSuccess }) {
   for (const otherPkg of allPackages) {
     if (otherPkg.id === pkg.id) continue
     for (const item of otherPkg.items || []) {
-      if (item.bid_item?.id) {
-        itemsInOtherPackages[item.bid_item.id] = otherPkg.name
+      if (item.bid_item_id) {
+        itemsInOtherPackages[item.bid_item_id] = otherPkg.name
       }
     }
   }
@@ -882,7 +889,7 @@ function EditPackageModal({ pkg, bidItems, allPackages, onClose, onSuccess }) {
     if (targetPackageId && targetPackageId !== 'none') {
       try {
         const targetPkg = allPackages.find(p => p.id === targetPackageId)
-        const targetItemIds = targetPkg.items?.map(i => i.bid_item?.id).filter(Boolean) || []
+        const targetItemIds = targetPkg.items?.map(i => i.bid_item_id).filter(Boolean) || []
         await updateScopePackage(targetPackageId, {}, [...targetItemIds, itemId])
         toast.success('Item moved to ' + targetPkg.name)
       } catch (error) {

@@ -445,12 +445,7 @@ export async function fetchScopePackages(projectId) {
     .select(`
       *,
       items:scope_package_items (
-        bid_item:bid_items (
-          id,
-          description,
-          item_number,
-          trade:trades (id, name, division_code)
-        )
+        bid_item_id
       )
     `)
     .eq('project_id', projectId)
