@@ -35,10 +35,11 @@ async function loadPdfJs() {
   const pdfjs = await import('pdfjs-dist')
   pdfjsLib = pdfjs
 
-  // Use unpkg CDN for the worker - must match exact pdfjs-dist version from package.json
-  pdfjs.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@5.4.624/build/pdf.worker.min.mjs'
+  // Disable worker to avoid version mismatch and CORS issues
+  // PDFs will be processed on the main thread (slightly slower but more reliable)
+  pdfjs.GlobalWorkerOptions.workerSrc = ''
 
-  console.log('PDF.js loaded successfully')
+  console.log('PDF.js loaded successfully (no worker)')
   return pdfjsLib
 }
 
@@ -96,6 +97,7 @@ async function loadPdfDocument(pdfFile) {
   console.log('Loading PDF document...')
   const loadingTask = pdfjs.getDocument({
     data: arrayBuffer,
+    disableWorker: true,
     useWorkerFetch: false,
     isEvalSupported: false,
     useSystemFonts: true
