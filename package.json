@@ -16,7 +16,7 @@
     "canvas": "^3.2.1",
     "date-fns": "^3.0.0",
     "lucide-react": "^0.303.0",
-    "pdfjs-dist": "^5.0.375",
+    "pdfjs-dist": "^4.4.168",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-hot-toast": "^2.4.1",
