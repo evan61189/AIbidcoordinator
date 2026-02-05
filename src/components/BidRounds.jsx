@@ -35,9 +35,8 @@ async function loadPdfJs() {
   const pdfjs = await import('pdfjs-dist')
   pdfjsLib = pdfjs
 
-  // Use CDN for the worker to avoid bundling issues
-  // Match the major version of pdfjs-dist (5.x)
-  pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.0.375/pdf.worker.min.mjs'
+  // Use unpkg CDN for the worker - must match exact pdfjs-dist version from package.json
+  pdfjs.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@5.4.624/build/pdf.worker.min.mjs'
 
   console.log('PDF.js loaded successfully')
   return pdfjsLib
