@@ -35,11 +35,11 @@ async function loadPdfJs() {
   const pdfjs = await import('pdfjs-dist')
   pdfjsLib = pdfjs
 
-  // Disable worker to avoid worker loading issues
-  // This runs PDF parsing on main thread (slightly slower but more reliable)
-  pdfjs.GlobalWorkerOptions.workerSrc = ''
+  // Use CDN for the worker to avoid bundling issues
+  // Match the major version of pdfjs-dist (5.x)
+  pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.0.375/pdf.worker.min.mjs'
 
-  console.log('PDF.js loaded successfully (using main thread)')
+  console.log('PDF.js loaded successfully')
   return pdfjsLib
 }
 
