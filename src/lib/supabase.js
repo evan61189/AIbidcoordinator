@@ -612,7 +612,7 @@ export async function fetchPackageBids(status = null, projectId = null) {
     .from('package_bids')
     .select(`
       *,
-      scope_package:scope_packages (id, name, package_type),
+      scope_package:scope_packages (id, name),
       subcontractor:subcontractors (id, company_name, contact_name, email),
       project:projects (id, name),
       bid_response:bid_responses (id, total_amount, ai_confidence_score),
@@ -688,7 +688,6 @@ export async function fetchApprovedPackageBidsForProject(projectId) {
       scope_package:scope_packages (
         id,
         name,
-        package_type,
         scope_package_items (
           bid_item_id,
           bid_item:bid_items (

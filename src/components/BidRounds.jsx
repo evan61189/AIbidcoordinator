@@ -21,6 +21,13 @@ if (typeof Promise.withResolvers !== 'function') {
   }
 }
 
+// Polyfill for Promise.try (needed by pdfjs-dist 5.x, not available in older browsers)
+if (typeof Promise.try !== 'function') {
+  Promise.try = function(fn) {
+    return new Promise((resolve) => resolve(fn()))
+  }
+}
+
 // Lazy load PDF.js only when needed
 let pdfjsLib = null
 async function loadPdfJs() {
