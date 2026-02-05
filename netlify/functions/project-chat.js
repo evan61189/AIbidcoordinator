@@ -137,6 +137,12 @@ async function fetchProjectData(supabase, projectId) {
     `)
     .eq('project_id', projectId)
 
+  // Fetch all trades for move suggestions
+  const { data: trades } = await supabase
+    .from('trades')
+    .select('id, name, division_code')
+    .order('division_code')
+
   // Organize bids by item and find lowest
   const bidsByItem = {}
   const lowestBidsByItem = {}
@@ -198,12 +204,16 @@ async function fetchProjectData(supabase, projectId) {
     bidsByItem,
     lowestBidsByItem,
     scopePackages: scopePackages || [],
-    packageSummaries
+    packageSummaries,
+    trades: trades || []
   }
 }
 
 function buildSystemPrompt(data) {
-  const { project, bidItems, bids, lowestBidsByItem, packageSummaries } = data
+  const { project, bidItems, bids, lowestBidsByItem, packageSummaries, trades } = data
+
+  // Build trades reference for moving items
+  const tradesText = trades.map(t => `  ${t.division_code} - ${t.name} (id: ${t.id})`).join('\n')
 
   // Calculate totals
   let totalLowestBids = 0
@@ -223,7 +233,8 @@ function buildSystemPrompt(data) {
   const itemsText = bidItems.slice(0, 50).map(item => {
     const lowest = lowestBidsByItem[item.id]
     const bidsForItem = data.bidsByItem[item.id] || []
-    return `  - ${item.item_number || ''} ${item.description}: ${lowest ? `$${lowest.amount.toLocaleString()} (${lowest.subcontractor?.company_name})` : 'No bids'} [${bidsForItem.length} bid(s)]`
+    const divInfo = item.trade ? `[Div ${item.trade.division_code}]` : '[No division]'
+    return `  - (id: ${item.id}) ${item.item_number || ''} ${item.description} ${divInfo}: ${lowest ? `$${lowest.amount.toLocaleString()} (${lowest.subcontractor?.company_name})` : 'No bids'} [${bidsForItem.length} bid(s)]`
   }).join('\n')
 
   return `You are an AI assistant for construction bid coordination at Clipper Construction. You help estimators and project managers analyze bids, answer questions, and make modifications to estimates.
@@ -244,15 +255,20 @@ ${packageText || 'No packages defined'}
 BID ITEMS (first 50):
 ${itemsText || 'No bid items'}
 
+AVAILABLE TRADES/DIVISIONS (use these IDs when moving items):
+${tradesText || 'No trades available'}
+
 CAPABILITIES:
 1. ANSWER QUESTIONS about bids, packages, subcontractors, and pricing
 2. PROPOSE CHANGES to the estimate (these require user approval before applying)
+3. MOVE BID ITEMS between divisions/trades if they are miscategorized
+4. DELETE BID ITEMS that are not needed
 
-When the user asks you to MAKE A CHANGE (like updating a bid amount, selecting a different subcontractor, adding markup, etc.), you MUST respond with a structured change proposal in this exact format:
+When the user asks you to MAKE A CHANGE (like updating a bid amount, selecting a different subcontractor, adding markup, moving items, deleting items, etc.), you MUST respond with a structured change proposal in this exact format:
 
 <proposed_change>
 {
-  "type": "update_bid" | "select_bid" | "add_markup" | "update_estimate" | "create_package" | "assign_items",
+  "type": "update_bid" | "select_bid" | "add_markup" | "update_estimate" | "create_package" | "assign_items" | "move_bid_item" | "delete_bid_item",
   "description": "Human-readable description of what will change",
   "target": "What is being modified (item name, package name, etc.)",
   "current_value": "The current state",
@@ -260,6 +276,14 @@ When the user asks you to MAKE A CHANGE (like updating a bid amount, selecting a
   "details": { /* type-specific details */ }
 }
 </proposed_change>
+
+CHANGE TYPE DETAILS:
+- move_bid_item: details = { "bid_item_id": "uuid", "trade_id": "uuid" }
+- delete_bid_item: details = { "bid_item_id": "uuid" }
+- update_bid: details = { "bid_id": "uuid", "amount": number, "notes": "string" }
+- update_estimate: details = { "bid_item_id": "uuid", "estimated_cost": number }
+- create_package: details = { "name": "string", "description": "string", "bid_item_ids": ["uuid1", "uuid2"] }
+- assign_items: details = { "package_id": "uuid", "bid_item_ids": ["uuid1"], "remove_from_other_packages": boolean }
 
 You can include multiple <proposed_change> blocks if the user's request requires multiple changes.
 
@@ -276,6 +300,9 @@ Examples of changes that need approval:
 - "Add 10% markup to all bids"
 - "Update the HVAC estimate to $150,000"
 - "Move insulation items to the HVAC package"
+- "Move the fire extinguisher item to Division 10 Specialties"
+- "Delete the duplicate drywall item"
+- "This item is miscategorized, move it to Division 26 Electrical"
 
 Always be specific with numbers and company names. If you don't have enough information to answer, say so.`
 }

@@ -97,6 +97,12 @@ async function applyChange(supabase, projectId, change) {
     case 'assign_items':
       return await assignItems(supabase, details)
 
+    case 'move_bid_item':
+      return await moveBidItem(supabase, details)
+
+    case 'delete_bid_item':
+      return await deleteBidItem(supabase, details)
+
     default:
       throw new Error(`Unknown change type: ${type}`)
   }
@@ -251,4 +257,63 @@ async function assignItems(supabase, details) {
   if (error) throw error
 
   return { assigned: bid_item_ids.length }
+}
+
+async function moveBidItem(supabase, details) {
+  const { bid_item_id, trade_id } = details
+
+  if (!bid_item_id) throw new Error('bid_item_id required')
+  if (!trade_id) throw new Error('trade_id required')
+
+  // Get the trade info for the response
+  const { data: trade } = await supabase
+    .from('trades')
+    .select('name, division_code')
+    .eq('id', trade_id)
+    .single()
+
+  const { data, error } = await supabase
+    .from('bid_items')
+    .update({
+      trade_id: trade_id,
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', bid_item_id)
+    .select()
+    .single()
+
+  if (error) throw error
+
+  return {
+    moved: data,
+    new_division: trade ? `${trade.division_code} - ${trade.name}` : trade_id
+  }
+}
+
+async function deleteBidItem(supabase, details) {
+  const { bid_item_id } = details
+
+  if (!bid_item_id) throw new Error('bid_item_id required')
+
+  // First, remove from any scope packages
+  await supabase
+    .from('scope_package_items')
+    .delete()
+    .eq('bid_item_id', bid_item_id)
+
+  // Delete any bids associated with this item
+  await supabase
+    .from('bids')
+    .delete()
+    .eq('bid_item_id', bid_item_id)
+
+  // Delete the bid item itself
+  const { error } = await supabase
+    .from('bid_items')
+    .delete()
+    .eq('id', bid_item_id)
+
+  if (error) throw error
+
+  return { deleted: bid_item_id }
 }
