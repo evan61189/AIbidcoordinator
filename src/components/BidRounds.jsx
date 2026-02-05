@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase, deleteBidItem as deleteBidItemFromDB } from '../lib/supabase'
 import {
   Layers, Plus, Upload, FileText, ChevronDown, ChevronRight,
   Calendar, Clock, DollarSign, Users, RefreshCw, Check, X,
@@ -96,7 +96,7 @@ async function loadPdfDocument(pdfFile) {
  * BidRounds Component
  * Manages pricing rounds within a project as drawings mature
  */
-export default function BidRounds({ projectId, projectName }) {
+export default function BidRounds({ projectId, projectName, onRefresh }) {
   const [rounds, setRounds] = useState([])
   const [loading, setLoading] = useState(true)
   const [expandedRound, setExpandedRound] = useState(null)
@@ -290,11 +290,33 @@ export default function BidRounds({ projectId, projectName }) {
         .select('id, storage_path')
         .eq('bid_round_id', roundId)
 
-      // Delete bid items for this round
-      await supabase
+      // Get bid item IDs for this round to properly cascade delete
+      const { data: bidItemsToDelete } = await supabase
         .from('bid_items')
-        .delete()
+        .select('id')
         .eq('bid_round_id', roundId)
+
+      if (bidItemsToDelete?.length > 0) {
+        const itemIds = bidItemsToDelete.map(item => item.id)
+
+        // Delete from scope_package_items first (foreign key)
+        await supabase
+          .from('scope_package_items')
+          .delete()
+          .in('bid_item_id', itemIds)
+
+        // Delete from bids (foreign key)
+        await supabase
+          .from('bids')
+          .delete()
+          .in('bid_item_id', itemIds)
+
+        // Now delete bid items for this round
+        await supabase
+          .from('bid_items')
+          .delete()
+          .eq('bid_round_id', roundId)
+      }
 
       // Delete drawings records
       if (drawings?.length > 0) {
@@ -341,6 +363,8 @@ export default function BidRounds({ projectId, projectName }) {
       }
 
       loadRounds()
+      // Notify parent to refresh bidItems (single source of truth)
+      if (onRefresh) await onRefresh()
     } catch (error) {
       toast.dismiss('delete-round')
       console.error('Error deleting round:', error)
@@ -483,16 +507,14 @@ export default function BidRounds({ projectId, projectName }) {
     }
 
     try {
-      const { error } = await supabase
-        .from('bid_items')
-        .delete()
-        .eq('id', itemId)
-
-      if (error) throw error
+      // Use the shared delete function that properly cleans up all related data
+      await deleteBidItemFromDB(itemId)
 
       toast.success('Bid item deleted')
       loadBidItemsForRound(viewingBidItemsRoundId)
       loadRounds() // Refresh counts
+      // Notify parent to refresh bidItems (single source of truth)
+      if (onRefresh) await onRefresh()
     } catch (error) {
       console.error('Error deleting bid item:', error)
       toast.error('Failed to delete bid item')
@@ -508,6 +530,22 @@ export default function BidRounds({ projectId, projectName }) {
     try {
       toast.loading(`Deleting ${count} bid items...`, { id: 'delete-all-items' })
 
+      // Get all item IDs for this round
+      const itemIds = roundBidItems.map(item => item.id)
+
+      // Delete from scope_package_items first (foreign key)
+      await supabase
+        .from('scope_package_items')
+        .delete()
+        .in('bid_item_id', itemIds)
+
+      // Delete from bids (foreign key)
+      await supabase
+        .from('bids')
+        .delete()
+        .in('bid_item_id', itemIds)
+
+      // Now delete the bid items
       const { error } = await supabase
         .from('bid_items')
         .delete()
@@ -519,6 +557,8 @@ export default function BidRounds({ projectId, projectName }) {
       toast.success(`Deleted ${count} bid items`)
       setViewingBidItemsRoundId(null)
       loadRounds()
+      // Notify parent to refresh bidItems (single source of truth)
+      if (onRefresh) await onRefresh()
     } catch (error) {
       toast.dismiss('delete-all-items')
       console.error('Error deleting bid items:', error)
@@ -528,10 +568,10 @@ export default function BidRounds({ projectId, projectName }) {
 
   // Delete ALL bid items for the entire project (cleanup orphans and reset)
   async function clearAllProjectBidItems() {
-    // Get total count first
-    const { count } = await supabase
+    // Get all item IDs for this project
+    const { data: items, count } = await supabase
       .from('bid_items')
-      .select('*', { count: 'exact', head: true })
+      .select('id', { count: 'exact' })
       .eq('project_id', projectId)
 
     if (!count || count === 0) {
@@ -546,6 +586,21 @@ export default function BidRounds({ projectId, projectName }) {
     try {
       toast.loading(`Deleting ${count} bid items...`, { id: 'clear-all-project' })
 
+      const itemIds = items.map(item => item.id)
+
+      // Delete from scope_package_items first (foreign key)
+      await supabase
+        .from('scope_package_items')
+        .delete()
+        .in('bid_item_id', itemIds)
+
+      // Delete from bids (foreign key)
+      await supabase
+        .from('bids')
+        .delete()
+        .in('bid_item_id', itemIds)
+
+      // Now delete the bid items
       const { error } = await supabase
         .from('bid_items')
         .delete()
@@ -556,6 +611,8 @@ export default function BidRounds({ projectId, projectName }) {
       toast.dismiss('clear-all-project')
       toast.success(`Deleted all ${count} bid items`)
       loadRounds()
+      // Notify parent to refresh bidItems (single source of truth)
+      if (onRefresh) await onRefresh()
     } catch (error) {
       toast.dismiss('clear-all-project')
       console.error('Error clearing all bid items:', error)
