@@ -24,7 +24,7 @@
 
 # Process uploaded drawings - handles large PDFs already in storage
 [functions."process-uploaded-drawing"]
-  external_node_modules = ["@anthropic-ai/sdk", "canvas", "pdfjs-dist"]
+  external_node_modules = ["@anthropic-ai/sdk"]
 
 # Upload drawing function - for smaller files
 [functions."upload-drawing"]
