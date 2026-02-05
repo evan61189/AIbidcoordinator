@@ -32,13 +32,16 @@ if (typeof Promise.try !== 'function') {
 let pdfjsLib = null
 async function loadPdfJs() {
   if (pdfjsLib) return pdfjsLib
-  const pdfjs = await import('pdfjs-dist')
+
+  const [pdfjs, workerModule] = await Promise.all([
+    import('pdfjs-dist'),
+    import('pdfjs-dist/build/pdf.worker.min.mjs?url')
+  ])
+
   pdfjsLib = pdfjs
+  pdfjs.GlobalWorkerOptions.workerSrc = workerModule.default
 
-  // Use CDN worker matching the installed pdfjs-dist version (5.0.375)
-  pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.0.375/pdf.worker.min.mjs'
-
-  console.log('PDF.js loaded successfully')
+  console.log('PDF.js loaded successfully with bundled worker')
   return pdfjsLib
 }
 
