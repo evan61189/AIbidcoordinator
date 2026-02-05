@@ -34,9 +34,12 @@ async function loadPdfJs() {
   if (pdfjsLib) return pdfjsLib
   const pdfjs = await import('pdfjs-dist')
   pdfjsLib = pdfjs
-  const workerModule = await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
-  pdfjs.GlobalWorkerOptions.workerSrc = workerModule.default
-  console.log('PDF.js loaded successfully')
+
+  // Disable worker to avoid worker loading issues
+  // This runs PDF parsing on main thread (slightly slower but more reliable)
+  pdfjs.GlobalWorkerOptions.workerSrc = ''
+
+  console.log('PDF.js loaded successfully (using main thread)')
   return pdfjsLib
 }
 
@@ -92,7 +95,12 @@ async function loadPdfDocument(pdfFile) {
   console.log('PDF file read, size:', arrayBuffer.byteLength)
 
   console.log('Loading PDF document...')
-  const loadingTask = pdfjs.getDocument({ data: arrayBuffer })
+  const loadingTask = pdfjs.getDocument({
+    data: arrayBuffer,
+    useWorkerFetch: false,
+    isEvalSupported: false,
+    useSystemFonts: true
+  })
   const pdf = await loadingTask.promise
   console.log('PDF document loaded:', pdf.numPages, 'pages')
 
