@@ -302,6 +302,14 @@ async function deleteBidItem(supabase, details) {
 
   if (!bid_item_id) throw new Error('bid_item_id required')
 
+  // Get which packages this item belongs to before deleting
+  const { data: packageItems } = await supabase
+    .from('scope_package_items')
+    .select('scope_package_id')
+    .eq('bid_item_id', bid_item_id)
+
+  const affectedPackageIds = packageItems?.map(p => p.scope_package_id) || []
+
   // First, remove from any scope packages
   await supabase
     .from('scope_package_items')
@@ -322,5 +330,19 @@ async function deleteBidItem(supabase, details) {
 
   if (error) throw error
 
-  return { deleted: bid_item_id }
+  // Clean up any packages that are now empty
+  const deletedPackages = []
+  for (const pkgId of affectedPackageIds) {
+    const { count } = await supabase
+      .from('scope_package_items')
+      .select('*', { count: 'exact', head: true })
+      .eq('scope_package_id', pkgId)
+
+    if (count === 0) {
+      await supabase.from('scope_packages').delete().eq('id', pkgId)
+      deletedPackages.push(pkgId)
+    }
+  }
+
+  return { deleted: bid_item_id, deleted_empty_packages: deletedPackages }
 }

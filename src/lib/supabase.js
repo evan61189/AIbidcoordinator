@@ -258,6 +258,14 @@ export async function updateBidItem(id, updates) {
 export async function deleteBidItem(id) {
   console.log('Deleting bid item:', id)
 
+  // Get which packages this item belongs to before deleting
+  const { data: packageItems } = await supabase
+    .from('scope_package_items')
+    .select('scope_package_id')
+    .eq('bid_item_id', id)
+
+  const affectedPackageIds = packageItems?.map(p => p.scope_package_id) || []
+
   // First delete any scope_package_items referencing this bid item
   const { error: pkgError } = await supabase
     .from('scope_package_items')
@@ -289,7 +297,35 @@ export async function deleteBidItem(id) {
     throw error
   }
 
+  // Clean up any packages that are now empty
+  if (affectedPackageIds.length > 0) {
+    await cleanupEmptyPackages(affectedPackageIds)
+  }
+
   console.log('Bid item deleted successfully:', id)
+}
+
+// Helper to delete packages that have no remaining items
+async function cleanupEmptyPackages(packageIds) {
+  for (const pkgId of packageIds) {
+    // Check if package still has any items
+    const { count } = await supabase
+      .from('scope_package_items')
+      .select('*', { count: 'exact', head: true })
+      .eq('scope_package_id', pkgId)
+
+    if (count === 0) {
+      console.log('Deleting empty package:', pkgId)
+      const { error } = await supabase
+        .from('scope_packages')
+        .delete()
+        .eq('id', pkgId)
+
+      if (error) {
+        console.error('Error deleting empty package:', error)
+      }
+    }
+  }
 }
 
 export async function createBid(bid) {

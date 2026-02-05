@@ -299,6 +299,13 @@ export default function BidRounds({ projectId, projectName, onRefresh }) {
       if (bidItemsToDelete?.length > 0) {
         const itemIds = bidItemsToDelete.map(item => item.id)
 
+        // Get affected package IDs before deleting
+        const { data: affectedPkgItems } = await supabase
+          .from('scope_package_items')
+          .select('scope_package_id')
+          .in('bid_item_id', itemIds)
+        const affectedPackageIds = [...new Set(affectedPkgItems?.map(p => p.scope_package_id) || [])]
+
         // Delete from scope_package_items first (foreign key)
         await supabase
           .from('scope_package_items')
@@ -316,6 +323,17 @@ export default function BidRounds({ projectId, projectName, onRefresh }) {
           .from('bid_items')
           .delete()
           .eq('bid_round_id', roundId)
+
+        // Clean up any packages that are now empty
+        for (const pkgId of affectedPackageIds) {
+          const { count } = await supabase
+            .from('scope_package_items')
+            .select('*', { count: 'exact', head: true })
+            .eq('scope_package_id', pkgId)
+          if (count === 0) {
+            await supabase.from('scope_packages').delete().eq('id', pkgId)
+          }
+        }
       }
 
       // Delete drawings records
@@ -533,6 +551,13 @@ export default function BidRounds({ projectId, projectName, onRefresh }) {
       // Get all item IDs for this round
       const itemIds = roundBidItems.map(item => item.id)
 
+      // Get affected package IDs before deleting
+      const { data: affectedPkgItems } = await supabase
+        .from('scope_package_items')
+        .select('scope_package_id')
+        .in('bid_item_id', itemIds)
+      const affectedPackageIds = [...new Set(affectedPkgItems?.map(p => p.scope_package_id) || [])]
+
       // Delete from scope_package_items first (foreign key)
       await supabase
         .from('scope_package_items')
@@ -552,6 +577,17 @@ export default function BidRounds({ projectId, projectName, onRefresh }) {
         .eq('bid_round_id', roundId)
 
       if (error) throw error
+
+      // Clean up any packages that are now empty
+      for (const pkgId of affectedPackageIds) {
+        const { count: pkgCount } = await supabase
+          .from('scope_package_items')
+          .select('*', { count: 'exact', head: true })
+          .eq('scope_package_id', pkgId)
+        if (pkgCount === 0) {
+          await supabase.from('scope_packages').delete().eq('id', pkgId)
+        }
+      }
 
       toast.dismiss('delete-all-items')
       toast.success(`Deleted ${count} bid items`)
@@ -579,7 +615,7 @@ export default function BidRounds({ projectId, projectName, onRefresh }) {
       return
     }
 
-    if (!confirm(`Are you sure you want to delete ALL ${count} bid items for this project?\n\nThis will remove all bid items from ALL rounds and any orphaned items.\n\nThis action cannot be undone.`)) {
+    if (!confirm(`Are you sure you want to delete ALL ${count} bid items for this project?\n\nThis will remove all bid items from ALL rounds, all bid packages, and any orphaned items.\n\nThis action cannot be undone.`)) {
       return
     }
 
@@ -608,8 +644,14 @@ export default function BidRounds({ projectId, projectName, onRefresh }) {
 
       if (error) throw error
 
+      // Delete all packages for this project (they're all empty now)
+      await supabase
+        .from('scope_packages')
+        .delete()
+        .eq('project_id', projectId)
+
       toast.dismiss('clear-all-project')
-      toast.success(`Deleted all ${count} bid items`)
+      toast.success(`Deleted all ${count} bid items and packages`)
       loadRounds()
       // Notify parent to refresh bidItems (single source of truth)
       if (onRefresh) await onRefresh()
