@@ -23,6 +23,7 @@ export default function ProjectDetail() {
   const [expandedTrades, setExpandedTrades] = useState({})
   const [showAddItem, setShowAddItem] = useState(false)
   const [showInviteModal, setShowInviteModal] = useState(false)
+  const [inviteModalKey, setInviteModalKey] = useState(0) // Forces remount to get fresh data
   const [subcontractors, setSubcontractors] = useState([])
   const [selectedItemsForDeletion, setSelectedItemsForDeletion] = useState([])
   const [deletingItems, setDeletingItems] = useState(false)
@@ -315,6 +316,7 @@ export default function ProjectDetail() {
         onAddBidItem={() => setShowAddItem(true)}
         onInviteSubs={() => {
           loadSubcontractors()
+          setInviteModalKey(k => k + 1) // Force fresh data load
           setShowInviteModal(true)
         }}
       />
@@ -339,6 +341,7 @@ export default function ProjectDetail() {
       {/* Invite Subcontractors Modal */}
       {showInviteModal && (
         <InviteSubsModal
+          key={inviteModalKey}
           projectId={id}
           project={project}
           bidItems={bidItems || []}
@@ -598,7 +601,7 @@ function InviteSubsModal({ projectId, bidItems: bidItemsProp, subcontractors, pr
       }
     }
     loadData()
-  }, [projectId])
+  }, []) // Empty dependency - reload fresh data every time modal mounts
 
   // Get items for each package based on current assignments
   const getPackageItems = (packageId) => {
