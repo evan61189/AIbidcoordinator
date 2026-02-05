@@ -9,25 +9,6 @@ import {
 import toast from 'react-hot-toast'
 import BidLeveling from './BidLeveling'
 
-// Polyfill for Promise.withResolvers (needed by pdfjs-dist 5.x, not available in Safari < 17.4)
-if (typeof Promise.withResolvers !== 'function') {
-  Promise.withResolvers = function() {
-    let resolve, reject
-    const promise = new Promise((res, rej) => {
-      resolve = res
-      reject = rej
-    })
-    return { promise, resolve, reject }
-  }
-}
-
-// Polyfill for Promise.try (needed by pdfjs-dist 5.x, not available in older browsers)
-if (typeof Promise.try !== 'function') {
-  Promise.try = function(fn) {
-    return new Promise((resolve) => resolve(fn()))
-  }
-}
-
 // Lazy load PDF.js only when needed
 let pdfjsLib = null
 async function loadPdfJs() {
@@ -35,13 +16,13 @@ async function loadPdfJs() {
 
   const [pdfjs, workerModule] = await Promise.all([
     import('pdfjs-dist'),
-    import('pdfjs-dist/build/pdf.worker.min.mjs?url')
+    import('pdfjs-dist/build/pdf.worker.min.js?url')
   ])
 
   pdfjsLib = pdfjs
   pdfjs.GlobalWorkerOptions.workerSrc = workerModule.default
 
-  console.log('PDF.js loaded successfully with bundled worker')
+  console.log('PDF.js 3.x loaded successfully')
   return pdfjsLib
 }
 
