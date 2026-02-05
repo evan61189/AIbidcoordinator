@@ -4,9 +4,6 @@ import {
   FolderKanban,
   Users,
   DollarSign,
-  Wrench,
-  Zap,
-  Mail,
   Building2,
   Menu
 } from 'lucide-react'
@@ -17,12 +14,6 @@ const navigation = [
   { name: 'Projects', href: '/projects', icon: FolderKanban },
   { name: 'Subcontractors', href: '/subcontractors', icon: Users },
   { name: 'Bids', href: '/bids', icon: DollarSign },
-  { name: 'Trades', href: '/trades', icon: Wrench },
-]
-
-const quickActions = [
-  { name: 'Quick Bid Entry', href: '/bids/quick-entry', icon: Zap },
-  { name: 'Parse Bid Email', href: '/email-parser', icon: Mail },
 ]
 
 export default function Layout() {
@@ -74,30 +65,6 @@ export default function Layout() {
               ))}
             </div>
 
-            <div className="mt-6 px-3">
-              <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-                AI Tools
-              </div>
-              <div className="space-y-1">
-                {quickActions.map((item) => (
-                  <NavLink
-                    key={item.name}
-                    to={item.href}
-                    onClick={() => setSidebarOpen(false)}
-                    className={({ isActive }) =>
-                      `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                        isActive
-                          ? 'bg-primary-600 text-white'
-                          : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-                      }`
-                    }
-                  >
-                    <item.icon className="h-5 w-5" />
-                    {item.name}
-                  </NavLink>
-                ))}
-              </div>
-            </div>
           </nav>
 
           {/* Footer */}
