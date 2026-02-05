@@ -265,8 +265,15 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
     setExpandedPackages(prev => ({ ...prev, [pkgId]: !prev[pkgId] }))
   }
 
+  // Get bid items for a package using the single source of truth (bidItems prop)
+  function getPackageItems(pkg) {
+    const itemIds = new Set(pkg.items?.map(i => i.bid_item_id).filter(Boolean) || [])
+    return bidItems.filter(item => itemIds.has(item.id))
+  }
+
   function analyzePackage(pkg) {
-    const packageItemIds = new Set(pkg.items?.map(i => i.bid_item?.id).filter(Boolean) || [])
+    const packageItems = getPackageItems(pkg)
+    const packageItemIds = new Set(packageItems.map(i => i.id))
     if (packageItemIds.size === 0) return { coverage: [], combinations: [] }
 
     const bidsBySubcontractor = {}
@@ -735,7 +742,7 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
                         {expandedPackages[pkg.id] ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                         <Package className="w-4 h-4 text-purple-600" />
                         {pkg.name}
-                        <span className="text-sm font-normal text-gray-500">({pkg.items?.length || 0} items)</span>
+                        <span className="text-sm font-normal text-gray-500">({getPackageItems(pkg).length} items)</span>
                       </button>
                       <div className="flex items-center gap-3">
                         {lowestComplete && (
@@ -763,15 +770,14 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
                             </tr>
                           </thead>
                           <tbody className="divide-y">
-                            {pkg.items?.map(({ bid_item }) => {
-                              if (!bid_item) return null
-                              const itemBids = bids.filter(b => b.bid_item?.id === bid_item.id)
+                            {getPackageItems(pkg).map(item => {
+                              const itemBids = bids.filter(b => b.bid_item?.id === item.id)
                               const lowestBid = itemBids.filter(b => b.amount > 0).sort((a, b) => a.amount - b.amount)[0]
-                              const amount = lowestBid?.amount || manualAmounts[bid_item.id] || 0
+                              const amount = lowestBid?.amount || manualAmounts[item.id] || 0
                               return (
-                                <tr key={bid_item.id} className="hover:bg-gray-50">
-                                  <td className="px-3 py-2 text-gray-500">{bid_item.trade?.division_code || '-'}</td>
-                                  <td className="px-3 py-2 text-gray-900">{bid_item.description}</td>
+                                <tr key={item.id} className="hover:bg-gray-50">
+                                  <td className="px-3 py-2 text-gray-500">{item.trade?.division_code || '-'}</td>
+                                  <td className="px-3 py-2 text-gray-900">{item.description}</td>
                                   <td className="px-3 py-2 text-gray-600">{lowestBid?.subcontractor?.company_name || '-'}</td>
                                   <td className="px-3 py-2 text-right font-medium">
                                     {amount > 0 ? formatCurrency(amount) : '-'}
@@ -1225,14 +1231,14 @@ function CreatePackageModal({ projectId, bidItems, onClose, onSuccess }) {
 function EditPackageModal({ pkg, bidItems, allPackages, onClose, onSuccess }) {
   const [name, setName] = useState(pkg.name || '')
   const [description, setDescription] = useState(pkg.description || '')
-  const [selectedItems, setSelectedItems] = useState(pkg.items?.map(i => i.bid_item?.id).filter(Boolean) || [])
+  const [selectedItems, setSelectedItems] = useState(pkg.items?.map(i => i.bid_item_id).filter(Boolean) || [])
   const [loading, setLoading] = useState(false)
 
   const itemsInOtherPackages = {}
   for (const otherPkg of allPackages) {
     if (otherPkg.id === pkg.id) continue
     for (const item of otherPkg.items || []) {
-      if (item.bid_item?.id) itemsInOtherPackages[item.bid_item.id] = otherPkg.name
+      if (item.bid_item_id) itemsInOtherPackages[item.bid_item_id] = otherPkg.name
     }
   }
 
