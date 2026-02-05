@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase, deleteBidItem as deleteBidItemFromDB } from '../lib/supabase'
+import { formatCurrency } from '../lib/utils'
 import {
   Layers, Plus, Upload, FileText, ChevronDown, ChevronRight,
-  Calendar, Clock, DollarSign, Users, RefreshCw, Check, X,
-  ArrowRight, TrendingUp, TrendingDown, Minus, Download, Eye, Edit, Save,
+  RefreshCw, Check, X, TrendingUp, TrendingDown, Minus, Eye, Edit,
   Trash2, ExternalLink
 } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -178,6 +178,47 @@ export default function BidRounds({ projectId, projectName, onRefresh }) {
     }
   }
 
+  /**
+   * Helper function to cascade delete bid items and clean up empty packages
+   * @param {string[]} itemIds - Array of bid item IDs to delete
+   * @param {boolean} cleanupEmptyPackages - Whether to delete packages that become empty
+   */
+  async function cascadeDeleteBidItems(itemIds, cleanupEmptyPackages = true) {
+    if (!itemIds || itemIds.length === 0) return
+
+    // Get affected package IDs before deleting
+    const { data: affectedPkgItems } = await supabase
+      .from('scope_package_items')
+      .select('scope_package_id')
+      .in('bid_item_id', itemIds)
+    const affectedPackageIds = [...new Set(affectedPkgItems?.map(p => p.scope_package_id) || [])]
+
+    // Delete from scope_package_items first (foreign key)
+    await supabase
+      .from('scope_package_items')
+      .delete()
+      .in('bid_item_id', itemIds)
+
+    // Delete from bids (foreign key)
+    await supabase
+      .from('bids')
+      .delete()
+      .in('bid_item_id', itemIds)
+
+    // Clean up any packages that are now empty
+    if (cleanupEmptyPackages) {
+      for (const pkgId of affectedPackageIds) {
+        const { count } = await supabase
+          .from('scope_package_items')
+          .select('*', { count: 'exact', head: true })
+          .eq('scope_package_id', pkgId)
+        if (count === 0) {
+          await supabase.from('scope_packages').delete().eq('id', pkgId)
+        }
+      }
+    }
+  }
+
   async function createNewRound(name, copyBidItems = true) {
     try {
       // Get the latest round number
@@ -313,42 +354,13 @@ export default function BidRounds({ projectId, projectName, onRefresh }) {
 
       if (bidItemsToDelete?.length > 0) {
         const itemIds = bidItemsToDelete.map(item => item.id)
-
-        // Get affected package IDs before deleting
-        const { data: affectedPkgItems } = await supabase
-          .from('scope_package_items')
-          .select('scope_package_id')
-          .in('bid_item_id', itemIds)
-        const affectedPackageIds = [...new Set(affectedPkgItems?.map(p => p.scope_package_id) || [])]
-
-        // Delete from scope_package_items first (foreign key)
-        await supabase
-          .from('scope_package_items')
-          .delete()
-          .in('bid_item_id', itemIds)
-
-        // Delete from bids (foreign key)
-        await supabase
-          .from('bids')
-          .delete()
-          .in('bid_item_id', itemIds)
+        await cascadeDeleteBidItems(itemIds)
 
         // Now delete bid items for this round
         await supabase
           .from('bid_items')
           .delete()
           .eq('bid_round_id', roundId)
-
-        // Clean up any packages that are now empty
-        for (const pkgId of affectedPackageIds) {
-          const { count } = await supabase
-            .from('scope_package_items')
-            .select('*', { count: 'exact', head: true })
-            .eq('scope_package_id', pkgId)
-          if (count === 0) {
-            await supabase.from('scope_packages').delete().eq('id', pkgId)
-          }
-        }
       }
 
       // Delete drawings records
@@ -566,24 +578,8 @@ export default function BidRounds({ projectId, projectName, onRefresh }) {
       // Get all item IDs for this round
       const itemIds = roundBidItems.map(item => item.id)
 
-      // Get affected package IDs before deleting
-      const { data: affectedPkgItems } = await supabase
-        .from('scope_package_items')
-        .select('scope_package_id')
-        .in('bid_item_id', itemIds)
-      const affectedPackageIds = [...new Set(affectedPkgItems?.map(p => p.scope_package_id) || [])]
-
-      // Delete from scope_package_items first (foreign key)
-      await supabase
-        .from('scope_package_items')
-        .delete()
-        .in('bid_item_id', itemIds)
-
-      // Delete from bids (foreign key)
-      await supabase
-        .from('bids')
-        .delete()
-        .in('bid_item_id', itemIds)
+      // Cascade delete related data and clean up packages
+      await cascadeDeleteBidItems(itemIds)
 
       // Now delete the bid items
       const { error } = await supabase
@@ -592,17 +588,6 @@ export default function BidRounds({ projectId, projectName, onRefresh }) {
         .eq('bid_round_id', roundId)
 
       if (error) throw error
-
-      // Clean up any packages that are now empty
-      for (const pkgId of affectedPackageIds) {
-        const { count: pkgCount } = await supabase
-          .from('scope_package_items')
-          .select('*', { count: 'exact', head: true })
-          .eq('scope_package_id', pkgId)
-        if (pkgCount === 0) {
-          await supabase.from('scope_packages').delete().eq('id', pkgId)
-        }
-      }
 
       toast.dismiss('delete-all-items')
       toast.success(`Deleted ${count} bid items`)
@@ -639,17 +624,8 @@ export default function BidRounds({ projectId, projectName, onRefresh }) {
 
       const itemIds = items.map(item => item.id)
 
-      // Delete from scope_package_items first (foreign key)
-      await supabase
-        .from('scope_package_items')
-        .delete()
-        .in('bid_item_id', itemIds)
-
-      // Delete from bids (foreign key)
-      await supabase
-        .from('bids')
-        .delete()
-        .in('bid_item_id', itemIds)
+      // Cascade delete related data (skip package cleanup since we delete all packages)
+      await cascadeDeleteBidItems(itemIds, false)
 
       // Now delete the bid items
       const { error } = await supabase
@@ -659,7 +635,7 @@ export default function BidRounds({ projectId, projectName, onRefresh }) {
 
       if (error) throw error
 
-      // Delete all packages for this project (they're all empty now)
+      // Delete all packages for this project
       await supabase
         .from('scope_packages')
         .delete()
@@ -676,9 +652,6 @@ export default function BidRounds({ projectId, projectName, onRefresh }) {
       toast.error('Failed to clear bid items')
     }
   }
-
-  // Maximum file size for direct function upload (smaller files go directly to function)
-  const MAX_DIRECT_UPLOAD_SIZE = 800 * 1024 // 800KB - stay under Netlify's 1MB limit with some buffer
 
   async function uploadToSupabaseStorage(file, roundId) {
     const timestamp = Date.now()
@@ -1035,16 +1008,6 @@ export default function BidRounds({ projectId, projectName, onRefresh }) {
       setUploadingDrawings(false)
       setUploadProgress(null)
     }
-  }
-
-  function formatCurrency(amount) {
-    if (!amount && amount !== 0) return '-'
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0
-    }).format(amount)
   }
 
   function formatDate(dateString) {
@@ -1567,16 +1530,6 @@ function RoundResponses({ roundId, projectName }) {
     }
   }
 
-  function formatCurrency(amount) {
-    if (!amount && amount !== 0) return '-'
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0
-    }).format(amount)
-  }
-
   if (loading) {
     return <div className="text-sm text-gray-500">Loading responses...</div>
   }
@@ -1694,16 +1647,6 @@ function RoundComparison({ rounds, projectId }) {
     } finally {
       setLoading(false)
     }
-  }
-
-  function formatCurrency(amount) {
-    if (!amount && amount !== 0) return '-'
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0
-    }).format(amount)
   }
 
   if (loading || comparisonData.length === 0) return null

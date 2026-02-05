@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase, fetchScopePackages, createScopePackage, updateScopePackage, deleteScopePackage, fetchBidsForLeveling } from '../lib/supabase'
+import { formatCurrency } from '../lib/utils'
 import {
   Package,
   Plus,
@@ -149,16 +150,6 @@ export default function ScopeBidComparison({ projectId, bidItems = [] }) {
     toast.success(`Created ${created} packages`)
     setAiSuggestions(null)
     loadData()
-  }
-
-  function formatCurrency(amount) {
-    if (!amount && amount !== 0) return '-'
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0
-    }).format(amount)
   }
 
   function togglePackage(pkgId) {

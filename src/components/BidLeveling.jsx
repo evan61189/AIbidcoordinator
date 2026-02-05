@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import { formatCurrency } from '../lib/utils'
 import {
   FileSpreadsheet,
   ChevronDown,
@@ -58,16 +59,6 @@ export default function BidLeveling({ projectId, projectName }) {
       ...prev,
       [section]: !prev[section]
     }))
-  }
-
-  function formatCurrency(amount) {
-    if (!amount && amount !== 0) return '-'
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0
-    }).format(amount)
   }
 
   function formatDate(dateString) {
