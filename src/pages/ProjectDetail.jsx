@@ -1,13 +1,12 @@
 import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import {
-  ArrowLeft, Edit, Plus, FileText, Users, DollarSign,
-  Calendar, MapPin, Building2, Download, ChevronDown, ChevronRight, Trash2,
-  Search, Mail, Check, X
+  ArrowLeft, Edit, Plus, Users, DollarSign,
+  Calendar, MapPin, Building2, Download,
+  Search, Mail, X
 } from 'lucide-react'
-import { fetchProject, fetchTrades, createBidItem, fetchSubcontractors, createBid, supabase, fetchScopePackages, fetchProjectBidItems, deleteAllProjectBidItems } from '../lib/supabase'
+import { fetchProject, fetchTrades, createBidItem, fetchSubcontractors, supabase, fetchScopePackages, fetchProjectBidItems } from '../lib/supabase'
 import { BID_PACKAGE_TYPES, getPackageType, isManualEntryPackage } from '../lib/packageTypes'
-import BidLeveling from '../components/BidLeveling'
 import BidRounds from '../components/BidRounds'
 import ProjectBidViews from '../components/ProjectBidViews'
 import ProjectChat from '../components/ProjectChat'
@@ -20,13 +19,10 @@ export default function ProjectDetail() {
   const [bidItems, setBidItems] = useState([])
   const [trades, setTrades] = useState([])
   const [loading, setLoading] = useState(true)
-  const [expandedTrades, setExpandedTrades] = useState({})
   const [showAddItem, setShowAddItem] = useState(false)
   const [showInviteModal, setShowInviteModal] = useState(false)
-  const [inviteModalKey, setInviteModalKey] = useState(0) // Forces remount to get fresh data
+  const [inviteModalKey, setInviteModalKey] = useState(0)
   const [subcontractors, setSubcontractors] = useState([])
-  const [selectedItemsForDeletion, setSelectedItemsForDeletion] = useState([])
-  const [deletingItems, setDeletingItems] = useState(false)
 
   useEffect(() => {
     loadProject()
@@ -37,41 +33,13 @@ export default function ProjectDetail() {
     try {
       const data = await fetchProject(id)
       setProject(data)
-
-      // Load bid items separately (only from active rounds)
       const items = await fetchProjectBidItems(id)
       setBidItems(items || [])
-
-      // Auto-expand trades with bid items
-      const expanded = {}
-      items?.forEach(item => {
-        if (item.trade) {
-          expanded[item.trade.id] = true
-        }
-      })
-      setExpandedTrades(expanded)
     } catch (error) {
       console.error('Error loading project:', error)
       toast.error('Failed to load project')
     } finally {
       setLoading(false)
-    }
-  }
-
-  // Clear all bid items for this project (cleanup orphans)
-  async function clearAllBidItems() {
-    if (!window.confirm('Are you sure you want to delete ALL bid items for this project?\n\nThis will remove all bid items regardless of which round they belong to.\n\nThis action cannot be undone.')) {
-      return
-    }
-
-    try {
-      await deleteAllProjectBidItems(id)
-      setBidItems([])
-      setSelectedItemsForDeletion([])
-      toast.success('All bid items deleted')
-    } catch (error) {
-      console.error('Error clearing bid items:', error)
-      toast.error('Failed to delete bid items')
     }
   }
 
@@ -83,105 +51,6 @@ export default function ProjectDetail() {
       console.error('Error loading trades:', error)
     }
   }
-
-  async function loadSubcontractors() {
-    try {
-      const data = await fetchSubcontractors()
-      setSubcontractors(data || [])
-    } catch (error) {
-      console.error('Error loading subcontractors:', error)
-    }
-  }
-
-  // Toggle item selection for deletion
-  function toggleItemSelection(itemId) {
-    setSelectedItemsForDeletion(prev =>
-      prev.includes(itemId)
-        ? prev.filter(id => id !== itemId)
-        : [...prev, itemId]
-    )
-  }
-
-  // Select all bid items for deletion
-  function selectAllItems() {
-    const allIds = bidItems?.map(item => item.id) || []
-    setSelectedItemsForDeletion(allIds)
-  }
-
-  // Clear selection
-  function clearItemSelection() {
-    setSelectedItemsForDeletion([])
-  }
-
-  // Delete selected bid items
-  async function deleteSelectedItems() {
-    if (selectedItemsForDeletion.length === 0) {
-      toast.error('No items selected')
-      return
-    }
-
-    const confirmMsg = `Are you sure you want to delete ${selectedItemsForDeletion.length} bid item(s)? This cannot be undone.`
-    if (!window.confirm(confirmMsg)) return
-
-    setDeletingItems(true)
-    try {
-      const { error } = await supabase
-        .from('bid_items')
-        .delete()
-        .in('id', selectedItemsForDeletion)
-
-      if (error) throw error
-
-      toast.success(`Deleted ${selectedItemsForDeletion.length} bid item(s)`)
-      setSelectedItemsForDeletion([])
-      loadProject() // Refresh the project data
-    } catch (error) {
-      console.error('Error deleting items:', error)
-      toast.error('Failed to delete items')
-    } finally {
-      setDeletingItems(false)
-    }
-  }
-
-  // Delete a single bid item
-  async function deleteBidItem(itemId) {
-    if (!window.confirm('Are you sure you want to delete this bid item?')) return
-
-    try {
-      const { error } = await supabase
-        .from('bid_items')
-        .delete()
-        .eq('id', itemId)
-
-      if (error) throw error
-
-      toast.success('Bid item deleted')
-      loadProject()
-    } catch (error) {
-      console.error('Error deleting item:', error)
-      toast.error('Failed to delete item')
-    }
-  }
-
-  function toggleTrade(tradeId) {
-    setExpandedTrades(prev => ({
-      ...prev,
-      [tradeId]: !prev[tradeId]
-    }))
-  }
-
-  // Group bid items by trade
-  const bidItemsByTrade = bidItems?.reduce((acc, item) => {
-    const tradeId = item.trade?.id
-    if (!acc[tradeId]) {
-      acc[tradeId] = {
-        trade: item.trade,
-        items: []
-      }
-    }
-    acc[tradeId].items.push(item)
-    return acc
-  }, {}) || {}
 
   if (loading) {
     return (
@@ -307,7 +176,7 @@ export default function ProjectDetail() {
         </div>
       )}
 
-      {/* Project Bid Views - Bid Package, Division, Client */}
+      {/* Project Bid Views */}
       <ProjectBidViews
         projectId={id}
         project={project}
@@ -315,15 +184,15 @@ export default function ProjectDetail() {
         onRefresh={loadProject}
         onAddBidItem={() => setShowAddItem(true)}
         onInviteSubs={async () => {
-          // Refresh bidItems from database before opening modal
           await loadProject()
-          loadSubcontractors()
-          setInviteModalKey(k => k + 1) // Force modal remount with fresh state
+          const subs = await fetchSubcontractors()
+          setSubcontractors(subs || [])
+          setInviteModalKey(k => k + 1)
           setShowInviteModal(true)
         }}
       />
 
-      {/* Bid Rounds - Manage pricing rounds and drawing versions */}
+      {/* Bid Rounds */}
       <BidRounds projectId={id} projectName={project?.name} onRefresh={loadProject} />
 
       {/* Add Bid Item Modal */}
@@ -524,9 +393,9 @@ function AddBidItemModal({ projectId, trades, bidDate, onClose, onSuccess }) {
 }
 
 function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose, onSuccess }) {
-  const [step, setStep] = useState(1) // 1: Review Bid Packages, 2: Select Subs, 3: Review & Send
+  const [step, setStep] = useState(1)
   const [searchQuery, setSearchQuery] = useState('')
-  const [selectedPackages, setSelectedPackages] = useState([]) // Package IDs to invite
+  const [selectedPackages, setSelectedPackages] = useState([])
   const [selectedSubs, setSelectedSubs] = useState([])
   const [loading, setLoading] = useState(false)
   const [sendEmails, setSendEmails] = useState(true)
@@ -536,17 +405,14 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
   const [useDrawingLinks, setUseDrawingLinks] = useState(false)
   const [scopePackages, setScopePackages] = useState([])
   const [loadingPackages, setLoadingPackages] = useState(true)
-  // Track item assignments - maps item ID to package ID (allows moving within modal)
   const [itemAssignments, setItemAssignments] = useState({})
 
-  // Load scope packages and drawings - bidItems comes from parent (single source of truth)
   useEffect(() => {
     async function loadData() {
       try {
-        // Load scope packages (only contains bid_item_id references, not embedded data)
         const allPackages = await fetchScopePackages(projectId)
 
-        // Deduplicate packages by name, keeping the one with the most items
+        // Deduplicate packages by name
         const packagesByName = {}
         allPackages?.forEach(pkg => {
           const name = pkg.name?.toLowerCase()?.trim()
@@ -559,7 +425,7 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
         const packages = Object.values(packagesByName)
         setScopePackages(packages)
 
-        // Build initial item assignments from packages (using bid_item_id)
+        // Build item assignments from packages
         const assignments = {}
         packages?.forEach(pkg => {
           pkg.items?.forEach(item => {
@@ -569,8 +435,6 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
           })
         })
         setItemAssignments(assignments)
-
-        // Select all packages by default
         setSelectedPackages(packages.map(p => p.id))
       } catch (error) {
         console.error('Error loading scope packages:', error)
@@ -579,7 +443,6 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
       }
 
       try {
-        // Load original PDF drawings only (not converted page images)
         const { data } = await supabase
           .from('drawings')
           .select('id, original_filename, drawing_number, title, discipline, file_size, storage_url, is_current, file_type')
@@ -597,23 +460,12 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
     loadData()
   }, [projectId])
 
-  // Get items for each package based on current assignments (uses bidItems from parent)
   const getPackageItems = (packageId) => {
     return bidItems.filter(item => itemAssignments[item.id] === packageId)
   }
 
-  // Get unassigned items (items not in any package)
   const unassignedItems = bidItems.filter(item => !itemAssignments[item.id])
 
-  // Move item to a different package
-  const moveItemToPackage = (itemId, newPackageId) => {
-    setItemAssignments(prev => ({
-      ...prev,
-      [itemId]: newPackageId || undefined
-    }))
-  }
-
-  // Filter items by search
   const filterItems = (items) => {
     if (!searchQuery.trim()) return items
     const query = searchQuery.toLowerCase()
@@ -624,16 +476,13 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
     )
   }
 
-  // Get all selected items from selected packages
   const selectedItems = selectedPackages.flatMap(pkgId =>
     getPackageItems(pkgId).map(item => item.id)
   )
 
-  // Get package type IDs from selected packages (normalize names to IDs)
   const normalizeToPackageTypeId = (name) => {
     if (!name) return null
     const normalized = name.toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
-    // Find matching package type
     const match = BID_PACKAGE_TYPES.find(pt =>
       pt.id === normalized ||
       pt.name.toLowerCase() === name.toLowerCase() ||
@@ -647,42 +496,12 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
       .map(pkgId => scopePackages.find(p => p.id === pkgId)?.name)
       .map(normalizeToPackageTypeId)
       .filter(Boolean)
-      .filter(id => !isManualEntryPackage(id)) // Exclude manual entry packages (e.g., General Requirements)
+      .filter(id => !isManualEntryPackage(id))
   )]
 
-  // Get relevant subcontractors based on their package_types matching selected packages
-  // (Manual entry packages like General Requirements won't match any subs)
   const relevantSubs = subcontractors.filter(sub =>
     sub.package_types?.some(pt => selectedPackageTypeIds.includes(pt))
   )
-
-  // Group subcontractors by their package types
-  const subsByPackageType = relevantSubs.reduce((acc, sub) => {
-    sub.package_types?.forEach(typeId => {
-      if (selectedPackageTypeIds.includes(typeId)) {
-        const pkgType = getPackageType(typeId)
-        if (!acc[typeId]) {
-          acc[typeId] = { packageType: pkgType, subs: [] }
-        }
-        if (!acc[typeId].subs.find(s => s.id === sub.id)) {
-          acc[typeId].subs.push(sub)
-        }
-      }
-    })
-    return acc
-  }, {})
-
-  function selectAllPackages() {
-    setSelectedPackages(scopePackages.map(p => p.id))
-  }
-
-  function clearPackageSelection() {
-    setSelectedPackages([])
-  }
-
-  function selectAllSubs() {
-    setSelectedSubs(relevantSubs.map(sub => sub.id))
-  }
 
   async function handleInvite() {
     if (selectedPackages.length === 0 || selectedItems.length === 0) {
@@ -699,24 +518,16 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
     let emailsSent = 0
 
     try {
-      // Get selected subs data
       const selectedSubsData = selectedSubs.map(id => subcontractors.find(sub => sub.id === id))
-
-      // Get package data for selected packages
       const selectedPackageData = selectedPackages.map(pkgId => {
         const pkg = scopePackages.find(p => p.id === pkgId)
         const items = getPackageItems(pkgId)
         return { ...pkg, items }
       }).filter(pkg => pkg.items.length > 0)
 
-      // Send one invitation per subcontractor (covering all selected packages)
       for (const sub of selectedSubsData) {
-        if (!sub?.email && sendEmails) {
-          console.log(`Skipping ${sub?.company_name} - no email`)
-          continue
-        }
+        if (!sub?.email && sendEmails) continue
 
-        // Collect all items from selected packages for this invitation
         const allItems = selectedPackageData.flatMap(pkg => pkg.items)
         const packageNames = selectedPackageData.map(pkg => pkg.name)
 
@@ -732,7 +543,6 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
                 project_name: project?.name,
                 project_location: project?.location,
                 bid_due_date: project?.bid_date,
-                // Include package names in email for clarity
                 package_names: packageNames,
                 bid_items: allItems.map(item => ({
                   trade: item?.trade?.name || 'General',
@@ -741,13 +551,10 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
                   unit: item?.unit || ''
                 })),
                 sender_company: 'Clipper Construction',
-                // Tracking for reply matching
                 project_id: project?.id,
                 subcontractor_id: sub.id,
                 bid_item_ids: allItems.map(item => item?.id).filter(Boolean),
-                // Package IDs for package-level tracking
                 package_ids: selectedPackages,
-                // Drawing attachments
                 drawing_ids: attachDrawings ? selectedDrawings : [],
                 include_drawing_links: useDrawingLinks
               })
@@ -762,7 +569,6 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
               toast.error(`Failed to email ${sub.company_name}: ${result.error}`)
             }
           } else {
-            // If not sending emails, just track the invitation
             invitationCount++
           }
         } catch (err) {
@@ -817,14 +623,14 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
               </div>
               <div className="flex items-center gap-2 mt-3">
                 <button
-                  onClick={selectAllPackages}
+                  onClick={() => setSelectedPackages(scopePackages.map(p => p.id))}
                   className="text-sm text-primary-600 hover:text-primary-700"
                 >
                   Select all {scopePackages.length} packages
                 </button>
                 <span className="text-gray-300">|</span>
                 <button
-                  onClick={clearPackageSelection}
+                  onClick={() => setSelectedPackages([])}
                   className="text-sm text-gray-600 hover:text-gray-700"
                 >
                   Clear selection
@@ -848,9 +654,7 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
                     const isSelected = selectedPackages.includes(pkg.id)
                     return (
                       <div key={pkg.id} className={`border rounded-lg overflow-hidden ${isSelected ? 'border-primary-300' : 'border-gray-200'}`}>
-                        <label className={`flex items-center gap-3 p-3 cursor-pointer ${
-                          isSelected ? 'bg-primary-50' : 'bg-gray-50 hover:bg-gray-100'
-                        }`}>
+                        <label className={`flex items-center gap-3 p-3 cursor-pointer ${isSelected ? 'bg-primary-50' : 'bg-gray-50 hover:bg-gray-100'}`}>
                           <input
                             type="checkbox"
                             checked={isSelected}
@@ -931,7 +735,7 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
               </p>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={selectAllSubs}
+                  onClick={() => setSelectedSubs(relevantSubs.map(sub => sub.id))}
                   className="text-sm text-primary-600 hover:text-primary-700"
                 >
                   Select all {relevantSubs.length} subs
@@ -955,9 +759,7 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
                   {relevantSubs.map(sub => (
                     <label
                       key={sub.id}
-                      className={`flex items-center gap-3 p-3 cursor-pointer hover:bg-gray-50 ${
-                        selectedSubs.includes(sub.id) ? 'bg-primary-50' : ''
-                      }`}
+                      className={`flex items-center gap-3 p-3 cursor-pointer hover:bg-gray-50 ${selectedSubs.includes(sub.id) ? 'bg-primary-50' : ''}`}
                     >
                       <input
                         type="checkbox"
@@ -1021,11 +823,8 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
                 <li>• {selectedPackages.length} bid package(s) selected</li>
                 <li>• {selectedItems.length} bid item(s) included</li>
                 <li>• {selectedSubs.length} subcontractor(s) selected</li>
-                <li>• <strong>{selectedSubs.length} invitation(s)</strong> will be sent (one per subcontractor)</li>
+                <li>• <strong>{selectedSubs.length} invitation(s)</strong> will be sent</li>
               </ul>
-              <p className="text-xs text-blue-600 mt-2">
-                Each invitation will request pricing for all {selectedPackages.length} selected package(s).
-              </p>
             </div>
 
             <div>
@@ -1107,9 +906,7 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
                   />
                   <div>
                     <span className="font-medium text-sm">Include drawings with invitation</span>
-                    <p className="text-xs text-gray-500">
-                      Attach PDF drawings to the email for subcontractors to review
-                    </p>
+                    <p className="text-xs text-gray-500">Attach PDF drawings to the email</p>
                   </div>
                 </label>
 
@@ -1138,15 +935,9 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
                       </label>
                     </div>
 
-                    {!useDrawingLinks && (
-                      <p className="text-xs text-amber-600 ml-7">
-                        Note: If total file size exceeds 25MB, download links will be sent instead
-                      </p>
-                    )}
-
                     <div className="ml-7 border rounded max-h-40 overflow-y-auto">
                       <div className="p-2 bg-gray-50 border-b flex items-center justify-between sticky top-0">
-                        <span className="text-sm font-medium text-gray-700">Select drawings to include</span>
+                        <span className="text-sm font-medium text-gray-700">Select drawings</span>
                         <div className="flex gap-2">
                           <button
                             type="button"
@@ -1212,10 +1003,7 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
         <div className="p-4 border-t border-gray-200 flex justify-between items-center">
           <div>
             {step > 1 && (
-              <button
-                onClick={() => setStep(step - 1)}
-                className="btn btn-secondary"
-              >
+              <button onClick={() => setStep(step - 1)} className="btn btn-secondary">
                 Back
               </button>
             )}
@@ -1238,9 +1026,7 @@ function InviteSubsModal({ projectId, bidItems, subcontractors, project, onClose
                 onClick={handleInvite}
                 disabled={loading || selectedItems.length === 0}
               >
-                {loading ? (
-                  'Sending...'
-                ) : (
+                {loading ? 'Sending...' : (
                   <>
                     <Mail className="h-4 w-4" />
                     Send {selectedSubs.length} Invitation(s)

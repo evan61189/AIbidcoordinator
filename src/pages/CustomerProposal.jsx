@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
+import { formatCurrency } from '../lib/utils'
 import {
   ArrowLeft,
   Download,
@@ -158,16 +159,6 @@ export default function CustomerProposal() {
       ...prev,
       [bidItemId]: bid
     }))
-  }
-
-  function formatCurrency(amount) {
-    if (!amount && amount !== 0) return '-'
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0
-    }).format(amount)
   }
 
   function formatDate(dateString) {

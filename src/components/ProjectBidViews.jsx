@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase, fetchScopePackages, createScopePackage, updateScopePackage, deleteScopePackage, fetchApprovedPackageBidsForProject, fetchTrades, updateBidItem, deleteBidItem } from '../lib/supabase'
+import { formatCurrency } from '../lib/utils'
 import {
   Package,
   Layers,
@@ -180,16 +181,6 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
       }
     }
     setSelectedBids(selected)
-  }
-
-  function formatCurrency(amount) {
-    if (!amount && amount !== 0) return '-'
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0
-    }).format(amount)
   }
 
   // ==================== AI ANALYSIS ====================
