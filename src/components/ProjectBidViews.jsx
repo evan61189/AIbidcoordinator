@@ -416,14 +416,18 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
     if (itemActionLoading) return
     setItemActionLoading(itemId)
     try {
+      console.log('Moving bid item:', itemId, 'to trade:', newTradeId)
       await updateBidItem(itemId, { trade_id: newTradeId })
       toast.success('Item moved to new division and removed from packages')
       setEditingBidItem(null)
-      if (onRefresh) onRefresh() // Refresh parent to update bidItems
-      loadData() // Refresh packages to show item as unassigned
+      // Refresh parent FIRST to update bidItems (single source of truth)
+      if (onRefresh) await onRefresh()
+      // Then refresh local package data
+      await loadData()
+      console.log('Refresh completed after move')
     } catch (error) {
       console.error('Error moving item:', error)
-      toast.error('Failed to move item')
+      toast.error(`Failed to move item: ${error.message}`)
     } finally {
       setItemActionLoading(null)
     }
@@ -436,13 +440,17 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
 
     setItemActionLoading(item.id)
     try {
+      console.log('Deleting bid item from UI:', item.id, item.description)
       await deleteBidItem(item.id)
       toast.success('Bid item deleted')
-      if (onRefresh) onRefresh() // Refresh parent to update bidItems
-      loadData() // Refresh packages in case item was in one
+      // Refresh parent FIRST to update bidItems (single source of truth)
+      if (onRefresh) await onRefresh()
+      // Then refresh local package data
+      await loadData()
+      console.log('Refresh completed after deletion')
     } catch (error) {
       console.error('Error deleting item:', error)
-      toast.error('Failed to delete item')
+      toast.error(`Failed to delete item: ${error.message}`)
     } finally {
       setItemActionLoading(null)
     }

@@ -256,11 +256,27 @@ export async function updateBidItem(id, updates) {
 }
 
 export async function deleteBidItem(id) {
+  console.log('Deleting bid item:', id)
+
   // First delete any scope_package_items referencing this bid item
-  await supabase
+  const { error: pkgError } = await supabase
     .from('scope_package_items')
     .delete()
     .eq('bid_item_id', id)
+
+  if (pkgError) {
+    console.error('Error deleting scope_package_items:', pkgError)
+  }
+
+  // Delete any bids associated with this item
+  const { error: bidsError } = await supabase
+    .from('bids')
+    .delete()
+    .eq('bid_item_id', id)
+
+  if (bidsError) {
+    console.error('Error deleting bids:', bidsError)
+  }
 
   // Then delete the bid item itself
   const { error } = await supabase
@@ -268,7 +284,12 @@ export async function deleteBidItem(id) {
     .delete()
     .eq('id', id)
 
-  if (error) throw error
+  if (error) {
+    console.error('Error deleting bid_item:', error)
+    throw error
+  }
+
+  console.log('Bid item deleted successfully:', id)
 }
 
 export async function createBid(bid) {
