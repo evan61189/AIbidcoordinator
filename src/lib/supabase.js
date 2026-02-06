@@ -192,14 +192,8 @@ export async function createBidItem(bidItem) {
 }
 
 export async function updateBidItem(id, updates) {
-  // If changing trade/division, remove from scope packages
-  if (updates.trade_id) {
-    await supabase
-      .from('scope_package_items')
-      .delete()
-      .eq('bid_item_id', id)
-  }
-
+  // Note: Changing trade/division no longer removes items from packages
+  // Items stay in their packages - only the division categorization changes
   const { data, error } = await supabase
     .from('bid_items')
     .update(updates)

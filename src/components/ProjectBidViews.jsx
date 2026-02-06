@@ -409,7 +409,7 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
     try {
       console.log('Moving bid item:', itemId, 'to trade:', newTradeId)
       await updateBidItem(itemId, { trade_id: newTradeId })
-      toast.success('Item moved to new division and removed from packages')
+      toast.success('Item moved to new division')
       setEditingBidItem(null)
       // Refresh parent FIRST to update bidItems (single source of truth)
       if (onRefresh) await onRefresh()
