@@ -287,6 +287,11 @@ IMPORTANT: If you see a list of scope items WITHOUT individual prices next to ea
 this is a LUMP SUM bid. Put those items in "scope_included" as text, NOT in "line_items".
 Only populate "line_items" when items have their own dollar amounts.
 
+ALSO DETECT:
+1. RFIs/QUESTIONS: Look for questions, clarifications needed, or RFIs in the email. These are requests for information about scope, drawings, specs, schedule, etc.
+2. FORWARDED EMAILS: Check if this appears to be a forwarded email (look for "Fwd:", "FW:", "Forwarded message", "---------- Forwarded message ----------", or similar). If so, extract the ORIGINAL sender's info.
+3. SENDER IDENTIFICATION FROM ATTACHMENTS: If PDFs are attached, look for company letterheads, signatures, contact info to identify who the bid/document is from.
+
 Return JSON only:
 {
   "total_amount": number or null,
@@ -317,8 +322,27 @@ Return JSON only:
   "lead_time": "Lead time or schedule if mentioned",
   "valid_until": "Quote validity date if mentioned (YYYY-MM-DD)",
   "warranty_info": "Warranty information if mentioned",
+  "rfis": [
+    {
+      "subject": "Brief summary of the question",
+      "question": "Full question text",
+      "category": "scope_clarification | drawing_conflict | spec_question | schedule | pricing | substitution | other",
+      "priority": "normal | high | urgent (based on language used)",
+      "drawing_reference": "Referenced drawing/sheet if any",
+      "spec_reference": "Referenced spec section if any"
+    }
+  ],
+  "is_forwarded_email": true if this appears to be forwarded, false otherwise,
+  "original_sender": {
+    "company_name": "Original sender company from forwarded email or PDF letterhead",
+    "contact_name": "Original sender name",
+    "email": "Original sender email if visible",
+    "phone": "Phone number if visible"
+  },
+  "identified_project": "Project name/number if mentioned in the email or documents",
+  "identified_trade": "Trade/division this bid appears to be for (e.g., Electrical, Plumbing, HVAC)",
   "confidence_score": 0.0 to 1.0,
-  "analysis_notes": "Note whether this is a lump sum or itemized bid, and any important observations"
+  "analysis_notes": "Note whether this is a lump sum or itemized bid, if it contains RFIs, if it's forwarded, and any important observations"
 }`
   })
 
@@ -328,7 +352,7 @@ Return JSON only:
   const message = await anthropic.messages.create({
     model: CLAUDE_MODEL,
     max_tokens: 4096,
-    system: `You are an expert construction bid analyst. Extract pricing and scope information from subcontractor bid responses.
+    system: `You are an expert construction bid analyst. Extract pricing, scope, and RFI information from subcontractor communications.
 
 CRITICAL DISTINCTION - Lump Sum vs Line Items:
 - LUMP SUM: One total price with a list of included scope/work items (items have NO individual prices)
@@ -337,7 +361,18 @@ CRITICAL DISTINCTION - Lump Sum vs Line Items:
 Many contractors list what's included in their bid WITHOUT pricing each item - this is still a LUMP SUM bid.
 Only extract "line_items" when each item has an explicit dollar amount. Otherwise, put the scope list in "scope_included".
 
+RFI DETECTION:
+- Look for questions, clarification requests, or information requests about scope, drawings, specs, schedule, etc.
+- Extract each distinct question as a separate RFI
+- RFIs may be mixed in with bid information - extract both
+
+FORWARDED EMAIL DETECTION:
+- Look for indicators like "Fwd:", "FW:", "Forwarded message", "From:" within the body, or similar
+- If forwarded, extract the ORIGINAL sender's company/contact info from the forwarded content
+- This helps match bids when PMs forward subcontractor emails
+
 Be thorough - analyze BOTH the email body AND any attached documents.
+Look at PDF letterheads, signatures, and contact info to identify the sending company.
 The email body often contains important clarifications, exclusions, or conditions not in the formal quote.
 Return only valid JSON.`,
     messages: [
@@ -659,6 +694,133 @@ async function savePerPackageBids(context, parsedBid, bidResponseId = null) {
 }
 
 /**
+ * Save RFIs extracted from email to the database
+ */
+async function saveRFIs(rfis, context, inboundEmailId) {
+  if (!supabase || !rfis || rfis.length === 0) return null
+
+  const projectId = context?.project?.id
+  const subcontractorId = context?.subcontractor?.id
+
+  if (!projectId) {
+    console.log('No project context for RFIs - cannot save')
+    return null
+  }
+
+  const results = []
+  for (const rfi of rfis) {
+    try {
+      const { data, error } = await supabase
+        .from('rfis')
+        .insert({
+          project_id: projectId,
+          subcontractor_id: subcontractorId,
+          subject: rfi.subject || 'Question from subcontractor',
+          question: rfi.question,
+          category: rfi.category || 'scope_clarification',
+          priority: rfi.priority || 'normal',
+          source: 'email',
+          source_email_id: inboundEmailId,
+          related_drawing_sheets: rfi.drawing_reference,
+          related_spec_sections: rfi.spec_reference,
+          status: 'open',
+          date_submitted: new Date().toISOString().split('T')[0]
+        })
+        .select()
+        .single()
+
+      if (error) {
+        console.error('Error saving RFI:', error)
+      } else {
+        results.push(data)
+        console.log(`Saved RFI: ${data.rfi_number} - ${data.subject}`)
+      }
+    } catch (err) {
+      console.error('Exception saving RFI:', err)
+    }
+  }
+
+  return results
+}
+
+/**
+ * Try to match a forwarded email to project/subcontractor using original sender info
+ */
+async function matchForwardedEmail(parsedBid, subject) {
+  if (!supabase) return null
+
+  const originalSender = parsedBid.original_sender
+  const identifiedProject = parsedBid.identified_project
+  const identifiedTrade = parsedBid.identified_trade
+
+  let context = { project: null, subcontractor: null, invitedPackages: [] }
+
+  // Try to match subcontractor by company name or email from original sender
+  if (originalSender?.company_name || originalSender?.email) {
+    const { data: subs } = await supabase
+      .from('subcontractors')
+      .select('id, company_name, email, contact_name')
+      .or(`company_name.ilike.%${originalSender.company_name || ''}%,email.ilike.%${originalSender.email || ''}%`)
+      .limit(1)
+
+    if (subs?.[0]) {
+      context.subcontractor = subs[0]
+      console.log(`Matched forwarded email to subcontractor: ${subs[0].company_name}`)
+    }
+  }
+
+  // Try to match project by name mentioned in email/PDF
+  if (identifiedProject) {
+    const { data: projects } = await supabase
+      .from('projects')
+      .select('id, name, project_number')
+      .or(`name.ilike.%${identifiedProject}%,project_number.ilike.%${identifiedProject}%`)
+      .eq('status', 'bidding')
+      .limit(1)
+
+    if (projects?.[0]) {
+      context.project = projects[0]
+      console.log(`Matched forwarded email to project: ${projects[0].name}`)
+    }
+  }
+
+  // If we have a subcontractor but no project, look for recent invitations
+  if (context.subcontractor && !context.project) {
+    const { data: invitations } = await supabase
+      .from('bid_invitations')
+      .select(`
+        id,
+        project_id,
+        projects:project_id (id, name)
+      `)
+      .eq('subcontractor_id', context.subcontractor.id)
+      .order('sent_at', { ascending: false })
+      .limit(5)
+
+    // Try to match by project name in subject or identified trade
+    for (const inv of invitations || []) {
+      if (inv.projects?.name) {
+        const projectNameLower = inv.projects.name.toLowerCase()
+        if (subject?.toLowerCase().includes(projectNameLower) ||
+            identifiedProject?.toLowerCase().includes(projectNameLower)) {
+          context.project = inv.projects
+          console.log(`Matched to project via invitation: ${inv.projects.name}`)
+          break
+        }
+      }
+    }
+
+    // If still no match, use most recent invitation
+    if (!context.project && invitations?.[0]?.projects) {
+      context.project = invitations[0].projects
+      console.log(`Using most recent invitation project: ${context.project.name}`)
+    }
+  }
+
+  return context
+}
+
+/**
  * Save parsed bid response to database
  */
 async function saveBidResponse(inboundEmail, parsedBid, context) {
@@ -857,7 +1019,7 @@ export async function handler(event) {
 
     // Analyze with AI - both body and attachments, pass packages for breakdown detection
     console.log('Starting AI analysis...')
-    const parsedBid = await analyzeWithAI(finalBody, attachments, context?.invitedPackages || [])
+    let parsedBid = await analyzeWithAI(finalBody, attachments, context?.invitedPackages || [])
     console.log('AI analysis complete:', {
       total: parsedBid.total_amount,
       isLumpSum: parsedBid.is_lump_sum,
@@ -865,10 +1027,31 @@ export async function handler(event) {
       confidence: parsedBid.confidence_score,
       isLumpSumForMultiple: parsedBid.is_lump_sum_for_multiple,
       hasPackageBreakdown: !!parsedBid.amounts_by_package && Object.keys(parsedBid.amounts_by_package).length > 0,
+      isForwarded: parsedBid.is_forwarded_email,
+      rfisFound: parsedBid.rfis?.length || 0,
       analysisNotes: parsedBid.analysis_notes
     })
 
-    // Save to database first (so we have bid_response_id for package bids)
+    // Handle forwarded emails - try to match using original sender info
+    let finalContext = context
+    if (parsedBid.is_forwarded_email && (!context?.subcontractor || !context?.project)) {
+      console.log('Forwarded email detected, attempting to match using original sender info...')
+      const forwardedContext = await matchForwardedEmail(parsedBid, subject)
+      if (forwardedContext?.subcontractor || forwardedContext?.project) {
+        finalContext = {
+          ...context,
+          subcontractor: forwardedContext.subcontractor || context?.subcontractor,
+          project: forwardedContext.project || context?.project,
+          invitedPackages: context?.invitedPackages || []
+        }
+        console.log('Forwarded email matched:', {
+          subcontractor: finalContext.subcontractor?.company_name,
+          project: finalContext.project?.name
+        })
+      }
+    }
+
+    // Save to database first (so we have bid_response_id for package bids and RFIs)
     const savedData = await saveBidResponse(
       {
         from: fromEmail,
@@ -880,18 +1063,27 @@ export async function handler(event) {
         attachments
       },
       parsedBid,
-      context
+      finalContext
     )
     const bidResponseId = savedData?.bidResponse?.id
+    const inboundEmailId = savedData?.email?.id
+
+    // Save any RFIs that were extracted from the email
+    let savedRfis = null
+    if (parsedBid.rfis && parsedBid.rfis.length > 0) {
+      console.log(`Found ${parsedBid.rfis.length} RFIs in email, saving...`)
+      savedRfis = await saveRFIs(parsedBid.rfis, finalContext, inboundEmailId)
+      console.log('Saved RFIs:', savedRfis?.map(r => r.rfi_number))
+    }
 
     // Check if this is a clarification response with per-package breakdown
     let perPackageBidsCreated = null
-    const invitedPackages = context?.invitedPackages || []
+    const invitedPackages = finalContext?.invitedPackages || []
 
     if (parsedBid.amounts_by_package && Object.keys(parsedBid.amounts_by_package).length > 0) {
       // We have per-package amounts - save them to package_bids table
       console.log('Processing bid with per-package breakdown...')
-      perPackageBidsCreated = await savePerPackageBids(context, parsedBid, bidResponseId)
+      perPackageBidsCreated = await savePerPackageBids(finalContext, parsedBid, bidResponseId)
       console.log('Per-package bids created:', perPackageBidsCreated)
     } else if (invitedPackages.length === 1 && parsedBid.total_amount) {
       // Single package invitation with lump sum - auto-create package bid
@@ -902,7 +1094,7 @@ export async function handler(event) {
           [invitedPackages[0].name]: parsedBid.total_amount
         }
       }
-      perPackageBidsCreated = await savePerPackageBids(context, singlePackageBid, bidResponseId)
+      perPackageBidsCreated = await savePerPackageBids(finalContext, singlePackageBid, bidResponseId)
       console.log('Single package bid created:', perPackageBidsCreated)
     }
 
@@ -922,12 +1114,12 @@ export async function handler(event) {
       invitedPackages.length > 1 &&
       parsedBid.total_amount &&
       isLumpSumWithoutBreakdown &&
-      !context?.pendingClarification
+      !finalContext?.pendingClarification
     )
 
     if (needsClarification) {
       console.log('Detected lump sum bid for multiple packages - sending clarification request...')
-      clarificationSent = await sendClarificationEmail(context, parsedBid)
+      clarificationSent = await sendClarificationEmail(finalContext, parsedBid)
     }
 
     return {
@@ -939,9 +1131,10 @@ export async function handler(event) {
         from: fromEmail,
         subject: subject,
         matched: {
-          subcontractor: context?.subcontractor?.company_name || null,
-          project: context?.project?.name || null,
-          packages_count: invitedPackages.length
+          subcontractor: finalContext?.subcontractor?.company_name || null,
+          project: finalContext?.project?.name || null,
+          packages_count: invitedPackages.length,
+          matched_via_forwarded: parsedBid.is_forwarded_email && (!context?.subcontractor || !context?.project)
         },
         extracted: {
           total_amount: parsedBid.total_amount,
@@ -952,11 +1145,19 @@ export async function handler(event) {
           confidence_score: parsedBid.confidence_score,
           is_lump_sum_for_multiple: parsedBid.is_lump_sum_for_multiple,
           amounts_by_package: parsedBid.amounts_by_package || null,
+          is_forwarded_email: parsedBid.is_forwarded_email,
+          original_sender: parsedBid.original_sender,
+          identified_project: parsedBid.identified_project,
+          identified_trade: parsedBid.identified_trade,
           analysis_notes: parsedBid.analysis_notes
+        },
+        rfis: {
+          found_count: parsedBid.rfis?.length || 0,
+          saved: savedRfis?.map(r => ({ number: r.rfi_number, subject: r.subject })) || []
         },
         saved: !!savedData,
         clarification_workflow: {
-          was_clarification_response: !!context?.pendingClarification,
+          was_clarification_response: !!finalContext?.pendingClarification,
           per_package_bids_created: perPackageBidsCreated,
           clarification_sent: clarificationSent
         }

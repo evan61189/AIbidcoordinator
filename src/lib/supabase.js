@@ -574,3 +574,81 @@ export async function getDashboardStats() {
     totalSubcontractors: subcontractors.data?.length || 0
   }
 }
+
+// ============================================
+// RFIs (Requests for Information)
+// ============================================
+
+export async function fetchRFIs(projectId) {
+  const { data, error } = await supabase
+    .from('rfis')
+    .select(`
+      *,
+      subcontractor:subcontractors(id, company_name, contact_name, email),
+      trade:trades(id, name, division_code),
+      scope_package:scope_packages(id, name)
+    `)
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: false })
+
+  if (error) throw error
+  return data
+}
+
+export async function createRFI(rfiData) {
+  const { data, error } = await supabase
+    .from('rfis')
+    .insert(rfiData)
+    .select(`
+      *,
+      subcontractor:subcontractors(id, company_name, contact_name, email),
+      trade:trades(id, name, division_code)
+    `)
+    .single()
+
+  if (error) throw error
+  return data
+}
+
+export async function updateRFI(id, updates) {
+  const { data, error } = await supabase
+    .from('rfis')
+    .update(updates)
+    .eq('id', id)
+    .select(`
+      *,
+      subcontractor:subcontractors(id, company_name, contact_name, email),
+      trade:trades(id, name, division_code)
+    `)
+    .single()
+
+  if (error) throw error
+  return data
+}
+
+export async function deleteRFI(id) {
+  const { error } = await supabase
+    .from('rfis')
+    .delete()
+    .eq('id', id)
+
+  if (error) throw error
+}
+
+export async function answerRFI(id, response, respondedBy) {
+  const { data, error } = await supabase
+    .from('rfis')
+    .update({
+      response,
+      responded_by: respondedBy,
+      responded_at: new Date().toISOString(),
+      status: 'answered'
+    })
+    .eq('id', id)
+    .select()
+    .single()
+
+  if (error) throw error
+  return data
+}
+
