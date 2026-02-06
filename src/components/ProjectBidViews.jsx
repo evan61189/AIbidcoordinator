@@ -936,14 +936,14 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
                             </thead>
                             <tbody className="divide-y">
                               {getPackageItems(pkg).map(item => {
-                                const itemBids = bids.filter(b => b.bid_item?.id === item.id)
-                                const lowestBid = itemBids.filter(b => b.amount > 0).sort((a, b) => a.amount - b.amount)[0]
-                                const amount = lowestBid?.amount || manualAmounts[item.id] || 0
+                                // Use selectedBids which includes both item-level and package-level bids
+                                const selectedBid = selectedBids[item.id]
+                                const amount = selectedBid?.amount || manualAmounts[item.id] || 0
                                 return (
                                   <DraggableBidItemRow key={item.id} item={item}>
                                     <td className="px-3 py-2 text-gray-500">{item.trade?.division_code || '-'}</td>
                                     <td className="px-3 py-2 text-gray-900">{item.description}</td>
-                                    <td className="px-3 py-2 text-gray-600">{lowestBid?.subcontractor?.company_name || '-'}</td>
+                                    <td className="px-3 py-2 text-gray-600">{selectedBid?.subcontractor?.company_name || '-'}</td>
                                     <td className="px-3 py-2 text-right font-medium">
                                       {amount > 0 ? formatCurrency(amount) : '-'}
                                     </td>
