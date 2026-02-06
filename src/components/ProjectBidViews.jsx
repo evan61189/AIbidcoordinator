@@ -25,7 +25,7 @@ import {
   GripVertical
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { DndContext, DragOverlay, useDraggable, useDroppable, pointerWithin } from '@dnd-kit/core'
+import { DndContext, DragOverlay, useDraggable, useDroppable, pointerWithin, closestCenter, rectIntersection } from '@dnd-kit/core'
 
 // Draggable bid item row component
 function DraggableBidItemRow({ item, children }) {
@@ -515,28 +515,38 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
 
   // Move a bid item to a different package
   async function handleMoveItemToPackage(itemId, targetPackageId, sourcePackageId = null) {
+    console.log('handleMoveItemToPackage called:', { itemId, targetPackageId, sourcePackageId })
+
     // Don't do anything if source and target are the same
     if (sourcePackageId && sourcePackageId === targetPackageId) {
+      console.log('Source and target are the same, skipping')
       return
     }
 
     try {
       const targetPkg = scopePackages.find(p => p.id === targetPackageId)
+      console.log('Target package found:', targetPkg?.name, 'with', targetPkg?.items?.length, 'items')
 
       // Remove from source package first if specified
       if (sourcePackageId) {
         const sourcePkg = scopePackages.find(p => p.id === sourcePackageId)
         if (sourcePkg) {
           const remainingItemIds = sourcePkg.items?.map(i => i.bid_item_id).filter(id => id !== itemId) || []
+          console.log('Removing from source package:', sourcePkg.name, 'remaining items:', remainingItemIds.length)
           await updateScopePackage(sourcePackageId, {}, remainingItemIds)
+          console.log('Source package updated successfully')
         }
       }
 
       // Add to target package
       if (targetPkg) {
         const currentItemIds = targetPkg.items?.map(i => i.bid_item_id) || []
+        console.log('Current items in target:', currentItemIds.length, 'adding:', itemId)
         if (!currentItemIds.includes(itemId)) {
           await updateScopePackage(targetPackageId, {}, [...currentItemIds, itemId])
+          console.log('Target package updated successfully')
+        } else {
+          console.log('Item already in target package')
         }
       }
 
@@ -554,12 +564,22 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
     const { active, over } = event
     setActiveDragItem(null)
 
-    if (!over || !active) return
+    console.log('Drag ended - raw event:', {
+      activeId: active?.id,
+      overId: over?.id,
+      overData: over?.data?.current,
+      activeData: active?.data?.current
+    })
+
+    if (!over || !active) {
+      console.log('No over or active target')
+      return
+    }
 
     const draggedItemId = active.id
     const dropTarget = over.id
 
-    console.log('Drag ended:', { draggedItemId, dropTarget })
+    console.log('Drag ended:', { draggedItemId, dropTarget, dropTargetType: typeof dropTarget })
 
     // Check what type of drop target
     if (typeof dropTarget === 'string' && dropTarget.startsWith('division-')) {
@@ -583,18 +603,30 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
       console.log('Moving to package:', {
         targetPackageId,
         sourcePackageId: sourcePackage?.id,
-        item: item?.description
+        sourcePackageName: sourcePackage?.name,
+        item: item?.description,
+        allPackages: scopePackages.map(p => ({ id: p.id, name: p.name }))
       })
 
       if (item) {
         await handleMoveItemToPackage(draggedItemId, targetPackageId, sourcePackage?.id)
       }
+    } else {
+      console.log('Unknown drop target type:', dropTarget)
     }
   }
 
   function handleDragStart(event) {
     const item = bidItems.find(i => i.id === event.active.id)
     setActiveDragItem(item)
+    console.log('Drag started:', { itemId: event.active.id, item: item?.description })
+  }
+
+  function handleDragOver(event) {
+    const { active, over } = event
+    if (over) {
+      console.log('Dragging over:', { overId: over.id, overData: over.data?.current })
+    }
   }
 
   // Delete a bid item
@@ -873,8 +905,9 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
       {/* ==================== BID PACKAGE VIEW ==================== */}
       {activeView === 'package' && (
         <DndContext
-          collisionDetection={pointerWithin}
+          collisionDetection={closestCenter}
           onDragStart={handleDragStart}
+          onDragOver={handleDragOver}
           onDragEnd={handleDragEnd}
         >
           <div className="p-6">
