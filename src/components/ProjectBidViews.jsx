@@ -25,7 +25,7 @@ import {
   GripVertical
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { DndContext, DragOverlay, useDraggable, useDroppable, pointerWithin } from '@dnd-kit/core'
+import { DndContext, DragOverlay, useDraggable, useDroppable, pointerWithin, closestCenter, rectIntersection } from '@dnd-kit/core'
 
 // Draggable bid item row component
 function DraggableBidItemRow({ item, children }) {
@@ -496,15 +496,11 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
     if (itemActionLoading) return
     setItemActionLoading(itemId)
     try {
-      console.log('Moving bid item:', itemId, 'to trade:', newTradeId)
       await updateBidItem(itemId, { trade_id: newTradeId })
       toast.success('Item moved to new division')
       setEditingBidItem(null)
-      // Refresh parent FIRST to update bidItems (single source of truth)
       if (onRefresh) await onRefresh()
-      // Then refresh local package data
       await loadData()
-      console.log('Refresh completed after move')
     } catch (error) {
       console.error('Error moving item:', error)
       toast.error(`Failed to move item: ${error.message}`)
@@ -559,14 +555,11 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
     const draggedItemId = active.id
     const dropTarget = over.id
 
-    console.log('Drag ended:', { draggedItemId, dropTarget })
-
     // Check what type of drop target
     if (typeof dropTarget === 'string' && dropTarget.startsWith('division-')) {
       // Dropped on a division
       const targetTradeId = dropTarget.replace('division-', '')
       const item = bidItems.find(i => i.id === draggedItemId)
-      console.log('Moving to division:', { targetTradeId, item: item?.description })
       if (item && item.trade_id !== targetTradeId) {
         await handleMoveBidItem(draggedItemId, targetTradeId)
       }
@@ -579,12 +572,6 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
       const sourcePackage = scopePackages.find(pkg =>
         pkg.items?.some(i => i.bid_item_id === draggedItemId)
       )
-
-      console.log('Moving to package:', {
-        targetPackageId,
-        sourcePackageId: sourcePackage?.id,
-        item: item?.description
-      })
 
       if (item) {
         await handleMoveItemToPackage(draggedItemId, targetPackageId, sourcePackage?.id)
@@ -873,7 +860,7 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
       {/* ==================== BID PACKAGE VIEW ==================== */}
       {activeView === 'package' && (
         <DndContext
-          collisionDetection={pointerWithin}
+          collisionDetection={closestCenter}
           onDragStart={handleDragStart}
           onDragEnd={handleDragEnd}
         >
