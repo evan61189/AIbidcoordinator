@@ -47,6 +47,7 @@ export const BID_PACKAGE_TYPES = [
   { id: 'hvac', name: 'HVAC', description: 'Equipment, ductwork, controls, TAB' },
   { id: 'electrical', name: 'Electrical', description: 'Power, wiring, lighting, panels (NOT low voltage or fire alarm)' },
   { id: 'low_voltage', name: 'Low Voltage', description: 'Data/voice cabling, AV, security rough-in (separate from electrical)' },
+  { id: 'access_controls', name: 'Access Controls', description: 'Card readers, access panels, door hardware, maglocks, intercoms, security systems' },
   { id: 'fire_alarm', name: 'Fire Alarm', description: 'Alarm panels, detectors, notification devices (separate from electrical & sprinklers)' },
   { id: 'fire_protection', name: 'Fire Protection', description: 'Sprinklers, standpipes, fire pump (separate from fire alarm)' },
 ]

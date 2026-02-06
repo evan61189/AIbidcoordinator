@@ -515,18 +515,24 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
 
   // Move a bid item to a different package
   async function handleMoveItemToPackage(itemId, targetPackageId, sourcePackageId = null) {
+    // Don't do anything if source and target are the same
+    if (sourcePackageId && sourcePackageId === targetPackageId) {
+      return
+    }
+
     try {
-      // Remove from source package if specified
+      const targetPkg = scopePackages.find(p => p.id === targetPackageId)
+
+      // Remove from source package first if specified
       if (sourcePackageId) {
         const sourcePkg = scopePackages.find(p => p.id === sourcePackageId)
         if (sourcePkg) {
-          const currentItemIds = sourcePkg.items?.map(i => i.bid_item_id).filter(id => id !== itemId) || []
-          await updateScopePackage(sourcePackageId, {}, currentItemIds)
+          const remainingItemIds = sourcePkg.items?.map(i => i.bid_item_id).filter(id => id !== itemId) || []
+          await updateScopePackage(sourcePackageId, {}, remainingItemIds)
         }
       }
 
       // Add to target package
-      const targetPkg = scopePackages.find(p => p.id === targetPackageId)
       if (targetPkg) {
         const currentItemIds = targetPkg.items?.map(i => i.bid_item_id) || []
         if (!currentItemIds.includes(itemId)) {
@@ -553,23 +559,34 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
     const draggedItemId = active.id
     const dropTarget = over.id
 
+    console.log('Drag ended:', { draggedItemId, dropTarget })
+
     // Check what type of drop target
-    if (dropTarget.startsWith('division-')) {
+    if (typeof dropTarget === 'string' && dropTarget.startsWith('division-')) {
       // Dropped on a division
       const targetTradeId = dropTarget.replace('division-', '')
       const item = bidItems.find(i => i.id === draggedItemId)
+      console.log('Moving to division:', { targetTradeId, item: item?.description })
       if (item && item.trade_id !== targetTradeId) {
         await handleMoveBidItem(draggedItemId, targetTradeId)
       }
-    } else if (dropTarget.startsWith('package-')) {
+    } else if (typeof dropTarget === 'string' && dropTarget.startsWith('package-')) {
       // Dropped on a package
       const targetPackageId = dropTarget.replace('package-', '')
       const item = bidItems.find(i => i.id === draggedItemId)
+
+      // Find if item is currently in a package
+      const sourcePackage = scopePackages.find(pkg =>
+        pkg.items?.some(i => i.bid_item_id === draggedItemId)
+      )
+
+      console.log('Moving to package:', {
+        targetPackageId,
+        sourcePackageId: sourcePackage?.id,
+        item: item?.description
+      })
+
       if (item) {
-        // Find if item is currently in another package
-        const sourcePackage = scopePackages.find(pkg =>
-          pkg.items?.some(i => i.bid_item_id === draggedItemId)
-        )
         await handleMoveItemToPackage(draggedItemId, targetPackageId, sourcePackage?.id)
       }
     }
