@@ -408,6 +408,15 @@ export async function createScopePackage(projectId, name, description, bidItemId
   if (error) throw error
 
   if (bidItemIds.length > 0) {
+    // Remove these items from any existing packages first (items should only be in one package)
+    for (const bidItemId of bidItemIds) {
+      await supabase
+        .from('scope_package_items')
+        .delete()
+        .eq('bid_item_id', bidItemId)
+    }
+
+    // Add items to the new package
     const links = bidItemIds.map(bidItemId => ({
       scope_package_id: pkg.id,
       bid_item_id: bidItemId
@@ -436,7 +445,7 @@ export async function updateScopePackage(id, updates, bidItemIds = null) {
 
   // Update item links if provided
   if (bidItemIds !== null) {
-    // Delete existing links
+    // Delete existing links for this package
     const { error: deleteError } = await supabase
       .from('scope_package_items')
       .delete()
@@ -446,6 +455,14 @@ export async function updateScopePackage(id, updates, bidItemIds = null) {
 
     // Insert new links
     if (bidItemIds.length > 0) {
+      // First remove these items from any OTHER packages (items should only be in one package)
+      for (const bidItemId of bidItemIds) {
+        await supabase
+          .from('scope_package_items')
+          .delete()
+          .eq('bid_item_id', bidItemId)
+      }
+
       const links = bidItemIds.map(bidItemId => ({
         scope_package_id: id,
         bid_item_id: bidItemId

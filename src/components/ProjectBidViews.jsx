@@ -496,15 +496,11 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
     if (itemActionLoading) return
     setItemActionLoading(itemId)
     try {
-      console.log('Moving bid item:', itemId, 'to trade:', newTradeId)
       await updateBidItem(itemId, { trade_id: newTradeId })
       toast.success('Item moved to new division')
       setEditingBidItem(null)
-      // Refresh parent FIRST to update bidItems (single source of truth)
       if (onRefresh) await onRefresh()
-      // Then refresh local package data
       await loadData()
-      console.log('Refresh completed after move')
     } catch (error) {
       console.error('Error moving item:', error)
       toast.error(`Failed to move item: ${error.message}`)
@@ -515,38 +511,28 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
 
   // Move a bid item to a different package
   async function handleMoveItemToPackage(itemId, targetPackageId, sourcePackageId = null) {
-    console.log('handleMoveItemToPackage called:', { itemId, targetPackageId, sourcePackageId })
-
     // Don't do anything if source and target are the same
     if (sourcePackageId && sourcePackageId === targetPackageId) {
-      console.log('Source and target are the same, skipping')
       return
     }
 
     try {
       const targetPkg = scopePackages.find(p => p.id === targetPackageId)
-      console.log('Target package found:', targetPkg?.name, 'with', targetPkg?.items?.length, 'items')
 
       // Remove from source package first if specified
       if (sourcePackageId) {
         const sourcePkg = scopePackages.find(p => p.id === sourcePackageId)
         if (sourcePkg) {
           const remainingItemIds = sourcePkg.items?.map(i => i.bid_item_id).filter(id => id !== itemId) || []
-          console.log('Removing from source package:', sourcePkg.name, 'remaining items:', remainingItemIds.length)
           await updateScopePackage(sourcePackageId, {}, remainingItemIds)
-          console.log('Source package updated successfully')
         }
       }
 
       // Add to target package
       if (targetPkg) {
         const currentItemIds = targetPkg.items?.map(i => i.bid_item_id) || []
-        console.log('Current items in target:', currentItemIds.length, 'adding:', itemId)
         if (!currentItemIds.includes(itemId)) {
           await updateScopePackage(targetPackageId, {}, [...currentItemIds, itemId])
-          console.log('Target package updated successfully')
-        } else {
-          console.log('Item already in target package')
         }
       }
 
@@ -564,29 +550,16 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
     const { active, over } = event
     setActiveDragItem(null)
 
-    console.log('Drag ended - raw event:', {
-      activeId: active?.id,
-      overId: over?.id,
-      overData: over?.data?.current,
-      activeData: active?.data?.current
-    })
-
-    if (!over || !active) {
-      console.log('No over or active target')
-      return
-    }
+    if (!over || !active) return
 
     const draggedItemId = active.id
     const dropTarget = over.id
-
-    console.log('Drag ended:', { draggedItemId, dropTarget, dropTargetType: typeof dropTarget })
 
     // Check what type of drop target
     if (typeof dropTarget === 'string' && dropTarget.startsWith('division-')) {
       // Dropped on a division
       const targetTradeId = dropTarget.replace('division-', '')
       const item = bidItems.find(i => i.id === draggedItemId)
-      console.log('Moving to division:', { targetTradeId, item: item?.description })
       if (item && item.trade_id !== targetTradeId) {
         await handleMoveBidItem(draggedItemId, targetTradeId)
       }
@@ -600,33 +573,15 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
         pkg.items?.some(i => i.bid_item_id === draggedItemId)
       )
 
-      console.log('Moving to package:', {
-        targetPackageId,
-        sourcePackageId: sourcePackage?.id,
-        sourcePackageName: sourcePackage?.name,
-        item: item?.description,
-        allPackages: scopePackages.map(p => ({ id: p.id, name: p.name }))
-      })
-
       if (item) {
         await handleMoveItemToPackage(draggedItemId, targetPackageId, sourcePackage?.id)
       }
-    } else {
-      console.log('Unknown drop target type:', dropTarget)
     }
   }
 
   function handleDragStart(event) {
     const item = bidItems.find(i => i.id === event.active.id)
     setActiveDragItem(item)
-    console.log('Drag started:', { itemId: event.active.id, item: item?.description })
-  }
-
-  function handleDragOver(event) {
-    const { active, over } = event
-    if (over) {
-      console.log('Dragging over:', { overId: over.id, overData: over.data?.current })
-    }
   }
 
   // Delete a bid item
@@ -907,7 +862,6 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
         <DndContext
           collisionDetection={closestCenter}
           onDragStart={handleDragStart}
-          onDragOver={handleDragOver}
           onDragEnd={handleDragEnd}
         >
           <div className="p-6">
