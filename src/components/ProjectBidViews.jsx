@@ -21,9 +21,95 @@ import {
   ArrowRight,
   Users,
   AlertTriangle,
-  MoveHorizontal
+  MoveHorizontal,
+  GripVertical
 } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { DndContext, DragOverlay, useDraggable, useDroppable, pointerWithin } from '@dnd-kit/core'
+
+// Draggable bid item row component
+function DraggableBidItemRow({ item, children }) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: item.id,
+    data: { item }
+  })
+
+  const style = transform ? {
+    transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
+    opacity: isDragging ? 0.5 : 1,
+    zIndex: isDragging ? 1000 : undefined,
+  } : undefined
+
+  return (
+    <tr
+      ref={setNodeRef}
+      style={style}
+      className={`border-t hover:bg-gray-50 ${isDragging ? 'bg-indigo-50' : ''}`}
+    >
+      <td className="p-2 w-8">
+        <button
+          {...listeners}
+          {...attributes}
+          className="p-1 text-gray-400 hover:text-gray-600 cursor-grab active:cursor-grabbing"
+          title="Drag to move"
+        >
+          <GripVertical className="w-4 h-4" />
+        </button>
+      </td>
+      {children}
+    </tr>
+  )
+}
+
+// Droppable division wrapper - allows dropping items onto division headers
+function DroppableDivisionWrapper({ divisionCode, tradeId, children }) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `division-${tradeId}`,
+    data: { type: 'division', tradeId, divisionCode }
+  })
+
+  return (
+    <div
+      ref={setNodeRef}
+      className={`border rounded-lg transition-all ${isOver ? 'ring-2 ring-indigo-400 bg-indigo-50' : ''}`}
+    >
+      {children}
+    </div>
+  )
+}
+
+// Droppable package wrapper - allows dropping items onto packages
+function DroppablePackageWrapper({ packageId, packageName, children }) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `package-${packageId}`,
+    data: { type: 'package', packageId, packageName }
+  })
+
+  return (
+    <div
+      ref={setNodeRef}
+      className={`border rounded-lg transition-all ${isOver ? 'ring-2 ring-purple-400 bg-purple-50' : ''}`}
+    >
+      {children}
+    </div>
+  )
+}
+
+// Drag overlay component for visual feedback
+function DragOverlayContent({ item }) {
+  if (!item) return null
+  return (
+    <div className="bg-white shadow-lg rounded-lg p-3 border-2 border-indigo-400 max-w-md">
+      <div className="flex items-center gap-2">
+        <GripVertical className="w-4 h-4 text-indigo-500" />
+        <span className="font-medium text-gray-900">{item.description}</span>
+      </div>
+      <div className="text-xs text-gray-500 mt-1">
+        {item.trade?.division_code} - {item.trade?.name || 'Unassigned'}
+      </div>
+    </div>
+  )
+}
 
 /**
  * ProjectBidViews Component
@@ -59,6 +145,9 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
   const [overheadProfit, setOverheadProfit] = useState(0) // Separate line item at bottom
   const [contingency, setContingency] = useState(0)
   const [customLineItems, setCustomLineItems] = useState([])
+
+  // Drag and drop state
+  const [activeDragItem, setActiveDragItem] = useState(null)
 
   useEffect(() => {
     if (projectId) {
@@ -424,6 +513,73 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
     }
   }
 
+  // Move a bid item to a different package
+  async function handleMoveItemToPackage(itemId, targetPackageId, sourcePackageId = null) {
+    try {
+      // Remove from source package if specified
+      if (sourcePackageId) {
+        const sourcePkg = scopePackages.find(p => p.id === sourcePackageId)
+        if (sourcePkg) {
+          const currentItemIds = sourcePkg.items?.map(i => i.bid_item_id).filter(id => id !== itemId) || []
+          await updateScopePackage(sourcePackageId, {}, currentItemIds)
+        }
+      }
+
+      // Add to target package
+      const targetPkg = scopePackages.find(p => p.id === targetPackageId)
+      if (targetPkg) {
+        const currentItemIds = targetPkg.items?.map(i => i.bid_item_id) || []
+        if (!currentItemIds.includes(itemId)) {
+          await updateScopePackage(targetPackageId, {}, [...currentItemIds, itemId])
+        }
+      }
+
+      toast.success(`Item moved to ${targetPkg?.name || 'package'}`)
+      await loadData()
+      if (onRefresh) await onRefresh()
+    } catch (error) {
+      console.error('Error moving item to package:', error)
+      toast.error('Failed to move item')
+    }
+  }
+
+  // Handle drag end for both division and package views
+  async function handleDragEnd(event) {
+    const { active, over } = event
+    setActiveDragItem(null)
+
+    if (!over || !active) return
+
+    const draggedItemId = active.id
+    const dropTarget = over.id
+
+    // Check what type of drop target
+    if (dropTarget.startsWith('division-')) {
+      // Dropped on a division
+      const targetTradeId = dropTarget.replace('division-', '')
+      const item = bidItems.find(i => i.id === draggedItemId)
+      if (item && item.trade_id !== targetTradeId) {
+        await handleMoveBidItem(draggedItemId, targetTradeId)
+      }
+    } else if (dropTarget.startsWith('package-')) {
+      // Dropped on a package
+      const targetPackageId = dropTarget.replace('package-', '')
+      const item = bidItems.find(i => i.id === draggedItemId)
+      if (item) {
+        // Find if item is currently in another package
+        const sourcePackage = scopePackages.find(pkg =>
+          pkg.items?.some(i => i.bid_item_id === draggedItemId)
+        )
+        await handleMoveItemToPackage(draggedItemId, targetPackageId, sourcePackage?.id)
+      }
+    }
+  }
+
+  function handleDragStart(event) {
+    const item = bidItems.find(i => i.id === event.active.id)
+    setActiveDragItem(item)
+  }
+
   // Delete a bid item
   async function handleDeleteBidItem(item) {
     if (itemActionLoading) return
@@ -699,93 +855,99 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
 
       {/* ==================== BID PACKAGE VIEW ==================== */}
       {activeView === 'package' && (
-        <div className="p-6">
-          <div className="flex items-center justify-between mb-4">
-            <p className="text-sm text-gray-600">
-              Group bid items by how subcontractors typically bid work together.
-            </p>
-            <div className="flex gap-2">
-              {scopePackages.length > 0 && (
+        <DndContext
+          collisionDetection={pointerWithin}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+        >
+          <div className="p-6">
+            <div className="flex items-center justify-between mb-4">
+              <p className="text-sm text-gray-600">
+                Group bid items by how subcontractors typically bid work together. Drag items between packages.
+              </p>
+              <div className="flex gap-2">
+                {scopePackages.length > 0 && (
+                  <button
+                    onClick={handleDeleteAllPackages}
+                    className="flex items-center gap-1 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 border border-red-200 rounded"
+                  >
+                    <Trash2 className="w-4 h-4" /> Delete All
+                  </button>
+                )}
                 <button
-                  onClick={handleDeleteAllPackages}
-                  className="flex items-center gap-1 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 border border-red-200 rounded"
+                  onClick={() => setShowCreatePackage(true)}
+                  className="flex items-center gap-1 px-3 py-1.5 text-sm bg-purple-600 text-white hover:bg-purple-700 rounded"
                 >
-                  <Trash2 className="w-4 h-4" /> Delete All
+                  <Plus className="w-4 h-4" /> New Package
                 </button>
-              )}
-              <button
-                onClick={() => setShowCreatePackage(true)}
-                className="flex items-center gap-1 px-3 py-1.5 text-sm bg-purple-600 text-white hover:bg-purple-700 rounded"
-              >
-                <Plus className="w-4 h-4" /> New Package
-              </button>
+              </div>
             </div>
-          </div>
 
-          {scopePackages.length === 0 ? (
-            <div className="text-center py-12 text-gray-500">
-              <Package className="w-12 h-12 mx-auto mb-3 text-gray-300" />
-              <p className="mb-2">No bid packages defined yet</p>
-              <p className="text-sm">Use "AI Auto-Generate" to create packages based on industry knowledge</p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {scopePackages.map(pkg => {
-                const analysis = analyzePackage(pkg)
-                const lowestComplete = analysis.coverage.find(c => c.isComplete)
+            {scopePackages.length === 0 ? (
+              <div className="text-center py-12 text-gray-500">
+                <Package className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                <p className="mb-2">No bid packages defined yet</p>
+                <p className="text-sm">Use "AI Auto-Generate" to create packages based on industry knowledge</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {scopePackages.map(pkg => {
+                  const analysis = analyzePackage(pkg)
+                  const lowestComplete = analysis.coverage.find(c => c.isComplete)
 
-                return (
-                  <div key={pkg.id} className="border rounded-lg">
-                    <div className="flex items-center justify-between p-4 bg-gray-50">
-                      <button onClick={() => togglePackage(pkg.id)} className="flex items-center gap-2 font-medium text-gray-900 hover:text-indigo-700">
-                        {expandedPackages[pkg.id] ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                        <Package className="w-4 h-4 text-purple-600" />
-                        {pkg.name}
-                        <span className="text-sm font-normal text-gray-500">({getPackageItems(pkg).length} items)</span>
-                      </button>
-                      <div className="flex items-center gap-3">
-                        {lowestComplete && (
-                          <span className="text-green-600 font-semibold">Low: {formatCurrency(lowestComplete.total)}</span>
-                        )}
-                        <button onClick={() => setEditingPackage(pkg)} className="p-1 text-gray-400 hover:text-indigo-600 rounded">
-                          <Edit className="w-4 h-4" />
+                  return (
+                    <DroppablePackageWrapper key={pkg.id} packageId={pkg.id} packageName={pkg.name}>
+                      <div className="flex items-center justify-between p-4 bg-gray-50">
+                        <button onClick={() => togglePackage(pkg.id)} className="flex items-center gap-2 font-medium text-gray-900 hover:text-indigo-700">
+                          {expandedPackages[pkg.id] ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                          <Package className="w-4 h-4 text-purple-600" />
+                          {pkg.name}
+                          <span className="text-sm font-normal text-gray-500">({getPackageItems(pkg).length} items)</span>
                         </button>
-                        <button onClick={() => handleDeletePackage(pkg.id)} className="p-1 text-gray-400 hover:text-red-600 rounded">
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        <div className="flex items-center gap-3">
+                          {lowestComplete && (
+                            <span className="text-green-600 font-semibold">Low: {formatCurrency(lowestComplete.total)}</span>
+                          )}
+                          <button onClick={() => setEditingPackage(pkg)} className="p-1 text-gray-400 hover:text-indigo-600 rounded">
+                            <Edit className="w-4 h-4" />
+                          </button>
+                          <button onClick={() => handleDeletePackage(pkg.id)} className="p-1 text-gray-400 hover:text-red-600 rounded">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
-                    </div>
 
-                    {expandedPackages[pkg.id] && (
-                      <div className="border-t">
-                        {/* Package Items - Table Format */}
-                        <table className="w-full text-sm">
-                          <thead>
-                            <tr className="bg-gray-50 text-gray-600 text-xs">
-                              <th className="text-left px-3 py-2 w-16">Div</th>
-                              <th className="text-left px-3 py-2">Description</th>
-                              <th className="text-left px-3 py-2 w-32">Low Bid</th>
-                              <th className="text-right px-3 py-2 w-28">Amount</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y">
-                            {getPackageItems(pkg).map(item => {
-                              const itemBids = bids.filter(b => b.bid_item?.id === item.id)
-                              const lowestBid = itemBids.filter(b => b.amount > 0).sort((a, b) => a.amount - b.amount)[0]
-                              const amount = lowestBid?.amount || manualAmounts[item.id] || 0
-                              return (
-                                <tr key={item.id} className="hover:bg-gray-50">
-                                  <td className="px-3 py-2 text-gray-500">{item.trade?.division_code || '-'}</td>
-                                  <td className="px-3 py-2 text-gray-900">{item.description}</td>
-                                  <td className="px-3 py-2 text-gray-600">{lowestBid?.subcontractor?.company_name || '-'}</td>
-                                  <td className="px-3 py-2 text-right font-medium">
-                                    {amount > 0 ? formatCurrency(amount) : '-'}
-                                  </td>
-                                </tr>
-                              )
-                            })}
-                          </tbody>
-                        </table>
+                      {expandedPackages[pkg.id] && (
+                        <div className="border-t">
+                          {/* Package Items - Table Format */}
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="bg-gray-50 text-gray-600 text-xs">
+                                <th className="w-10"></th>
+                                <th className="text-left px-3 py-2 w-16">Div</th>
+                                <th className="text-left px-3 py-2">Description</th>
+                                <th className="text-left px-3 py-2 w-32">Low Bid</th>
+                                <th className="text-right px-3 py-2 w-28">Amount</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y">
+                              {getPackageItems(pkg).map(item => {
+                                const itemBids = bids.filter(b => b.bid_item?.id === item.id)
+                                const lowestBid = itemBids.filter(b => b.amount > 0).sort((a, b) => a.amount - b.amount)[0]
+                                const amount = lowestBid?.amount || manualAmounts[item.id] || 0
+                                return (
+                                  <DraggableBidItemRow key={item.id} item={item}>
+                                    <td className="px-3 py-2 text-gray-500">{item.trade?.division_code || '-'}</td>
+                                    <td className="px-3 py-2 text-gray-900">{item.description}</td>
+                                    <td className="px-3 py-2 text-gray-600">{lowestBid?.subcontractor?.company_name || '-'}</td>
+                                    <td className="px-3 py-2 text-right font-medium">
+                                      {amount > 0 ? formatCurrency(amount) : '-'}
+                                    </td>
+                                  </DraggableBidItemRow>
+                                )
+                              })}
+                            </tbody>
+                          </table>
 
                         {/* Bidders Summary */}
                         {analysis.coverage.length > 0 && (
@@ -812,111 +974,134 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
                         )}
                       </div>
                     )}
-                  </div>
+                  </DroppablePackageWrapper>
                 )
               })}
             </div>
           )}
-        </div>
+          </div>
+
+          <DragOverlay>
+            <DragOverlayContent item={activeDragItem} />
+          </DragOverlay>
+        </DndContext>
       )}
 
       {/* ==================== DIVISION VIEW ==================== */}
       {activeView === 'division' && (
-        <div className="p-6">
-          <p className="text-sm text-gray-600 mb-4">
-            View bid items organized by CSI MasterFormat divisions. Enter manual amounts for items without bids.
-          </p>
+        <DndContext
+          collisionDetection={pointerWithin}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+        >
+          <div className="p-6">
+            <p className="text-sm text-gray-600 mb-4">
+              View bid items organized by CSI MasterFormat divisions. Drag items to move between divisions.
+            </p>
 
-          <div className="space-y-3">
-            {groupByDivision(false).map(division => (
-              <div key={division.code} className="border rounded-lg">
-                <button
-                  onClick={() => toggleDivision(division.code)}
-                  className="w-full flex items-center justify-between p-4 bg-gray-50 hover:bg-gray-100 text-left"
-                >
-                  <div className="flex items-center gap-2">
-                    {expandedDivisions[division.code] ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                    <span className="font-medium text-gray-500">Division {division.code}</span>
-                    <span className="font-semibold text-gray-900">{division.name}</span>
-                    <span className="text-sm text-gray-500">({division.items.length} items)</span>
-                  </div>
-                  <span className="font-bold text-gray-900">{formatCurrency(division.total)}</span>
-                </button>
+            <div className="space-y-3">
+              {groupByDivision(false).map(division => {
+                const divisionTradeId = division.items[0]?.trade?.id
+                return (
+                  <DroppableDivisionWrapper
+                    key={division.code}
+                    divisionCode={division.code}
+                    tradeId={divisionTradeId}
+                  >
+                    <button
+                      onClick={() => toggleDivision(division.code)}
+                      className="w-full flex items-center justify-between p-4 bg-gray-50 hover:bg-gray-100 text-left"
+                    >
+                      <div className="flex items-center gap-2">
+                        {expandedDivisions[division.code] ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                        <span className="font-medium text-gray-500">Division {division.code}</span>
+                        <span className="font-semibold text-gray-900">{division.name}</span>
+                        <span className="text-sm text-gray-500">({division.items.length} items)</span>
+                      </div>
+                      <span className="font-bold text-gray-900">{formatCurrency(division.total)}</span>
+                    </button>
 
-                {expandedDivisions[division.code] && (
-                  <div className="border-t">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="bg-gray-50 text-gray-600">
-                          <th className="text-left p-3">Item</th>
-                          <th className="text-left p-3 w-40">Low Bid / Source</th>
-                          <th className="text-right p-3 w-32">Amount</th>
-                          <th className="text-center p-3 w-24">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {division.items.map(item => {
-                          const hasBid = item.selectedBid?.amount > 0
-                          const isLoading = itemActionLoading === item.id
-                          return (
-                            <tr key={item.id} className="border-t hover:bg-gray-50">
-                              <td className="p-3">{item.description}</td>
-                              <td className="p-3 text-gray-600">
-                                {hasBid ? item.selectedBid.subcontractor?.company_name : (
-                                  <span className="text-orange-600 text-xs">Manual Entry</span>
-                                )}
-                              </td>
-                              <td className="p-3 text-right">
-                                {hasBid ? (
-                                  <span className="font-medium">{formatCurrency(item.amount)}</span>
-                                ) : (
-                                  <div className="flex items-center justify-end gap-1">
-                                    <span className="text-gray-400">$</span>
-                                    <input
-                                      type="number"
-                                      value={manualAmounts[item.id] || ''}
-                                      onChange={(e) => updateManualAmount(item.id, e.target.value)}
-                                      placeholder="0"
-                                      className="w-24 text-right border rounded px-2 py-1 text-sm"
-                                    />
-                                  </div>
-                                )}
-                              </td>
-                              <td className="p-3 text-center">
-                                <div className="flex items-center justify-center gap-1">
-                                  <button
-                                    onClick={() => setEditingBidItem(item)}
-                                    disabled={isLoading}
-                                    className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded disabled:opacity-50"
-                                    title="Move to different division"
-                                  >
-                                    <MoveHorizontal className="w-4 h-4" />
-                                  </button>
-                                  <button
-                                    onClick={() => handleDeleteBidItem(item)}
-                                    disabled={isLoading}
-                                    className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded disabled:opacity-50"
-                                    title="Delete item"
-                                  >
-                                    {isLoading ? (
-                                      <RefreshCw className="w-4 h-4 animate-spin" />
-                                    ) : (
-                                      <Trash2 className="w-4 h-4" />
-                                    )}
-                                  </button>
-                                </div>
-                              </td>
+                    {expandedDivisions[division.code] && (
+                      <div className="border-t">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="bg-gray-50 text-gray-600">
+                              <th className="w-10"></th>
+                              <th className="text-left p-3">Item</th>
+                              <th className="text-left p-3 w-40">Low Bid / Source</th>
+                              <th className="text-right p-3 w-32">Amount</th>
+                              <th className="text-center p-3 w-24">Actions</th>
                             </tr>
-                          )
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            ))}
+                          </thead>
+                          <tbody>
+                            {division.items.map(item => {
+                              const hasBid = item.selectedBid?.amount > 0
+                              const isLoading = itemActionLoading === item.id
+                              return (
+                                <DraggableBidItemRow key={item.id} item={item}>
+                                  <td className="p-3">{item.description}</td>
+                                  <td className="p-3 text-gray-600">
+                                    {hasBid ? item.selectedBid.subcontractor?.company_name : (
+                                      <span className="text-orange-600 text-xs">Manual Entry</span>
+                                    )}
+                                  </td>
+                                  <td className="p-3 text-right">
+                                    {hasBid ? (
+                                      <span className="font-medium">{formatCurrency(item.amount)}</span>
+                                    ) : (
+                                      <div className="flex items-center justify-end gap-1">
+                                        <span className="text-gray-400">$</span>
+                                        <input
+                                          type="number"
+                                          value={manualAmounts[item.id] || ''}
+                                          onChange={(e) => updateManualAmount(item.id, e.target.value)}
+                                          placeholder="0"
+                                          className="w-24 text-right border rounded px-2 py-1 text-sm"
+                                        />
+                                      </div>
+                                    )}
+                                  </td>
+                                  <td className="p-3 text-center">
+                                    <div className="flex items-center justify-center gap-1">
+                                      <button
+                                        onClick={() => setEditingBidItem(item)}
+                                        disabled={isLoading}
+                                        className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded disabled:opacity-50"
+                                        title="Move to different division"
+                                      >
+                                        <MoveHorizontal className="w-4 h-4" />
+                                      </button>
+                                      <button
+                                        onClick={() => handleDeleteBidItem(item)}
+                                        disabled={isLoading}
+                                        className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded disabled:opacity-50"
+                                        title="Delete item"
+                                      >
+                                        {isLoading ? (
+                                          <RefreshCw className="w-4 h-4 animate-spin" />
+                                        ) : (
+                                          <Trash2 className="w-4 h-4" />
+                                        )}
+                                      </button>
+                                    </div>
+                                  </td>
+                                </DraggableBidItemRow>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </DroppableDivisionWrapper>
+                )
+              })}
+            </div>
           </div>
-        </div>
+
+          <DragOverlay>
+            <DragOverlayContent item={activeDragItem} />
+          </DragOverlay>
+        </DndContext>
       )}
 
       {/* ==================== CLIENT VIEW ==================== */}
