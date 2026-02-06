@@ -419,24 +419,42 @@ export async function createScopePackage(projectId, name, description, bidItemId
 }
 
 export async function updateScopePackage(id, updates, bidItemIds = null) {
-  const { data, error } = await supabase
-    .from('scope_packages')
-    .update(updates)
-    .eq('id', id)
-    .select()
-    .single()
+  let data = null
 
-  if (error) throw error
+  // Only update package fields if there are actual updates
+  if (updates && Object.keys(updates).length > 0) {
+    const { data: pkgData, error } = await supabase
+      .from('scope_packages')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single()
 
+    if (error) throw error
+    data = pkgData
+  }
+
+  // Update item links if provided
   if (bidItemIds !== null) {
-    await supabase.from('scope_package_items').delete().eq('scope_package_id', id)
+    // Delete existing links
+    const { error: deleteError } = await supabase
+      .from('scope_package_items')
+      .delete()
+      .eq('scope_package_id', id)
 
+    if (deleteError) throw deleteError
+
+    // Insert new links
     if (bidItemIds.length > 0) {
       const links = bidItemIds.map(bidItemId => ({
         scope_package_id: id,
         bid_item_id: bidItemId
       }))
-      await supabase.from('scope_package_items').insert(links)
+      const { error: insertError } = await supabase
+        .from('scope_package_items')
+        .insert(links)
+
+      if (insertError) throw insertError
     }
   }
 
