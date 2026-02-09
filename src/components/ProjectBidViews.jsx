@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { supabase, fetchScopePackages, createScopePackage, updateScopePackage, deleteScopePackage, fetchApprovedPackageBidsForProject, fetchTrades, updateBidItem, deleteBidItem } from '../lib/supabase'
+import { supabase, fetchScopePackages, createScopePackage, updateScopePackage, deleteScopePackage, fetchApprovedPackageBidsForProject, fetchTrades, updateBidItem, deleteBidItem, updatePackageBidAllocation } from '../lib/supabase'
 import { formatCurrency } from '../lib/utils'
 import {
   Package,
@@ -22,7 +22,9 @@ import {
   Users,
   AlertTriangle,
   MoveHorizontal,
-  GripVertical
+  GripVertical,
+  Sliders,
+  PieChart
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { DndContext, DragOverlay, useDraggable, useDroppable, pointerWithin, closestCenter, rectIntersection } from '@dnd-kit/core'
@@ -149,6 +151,9 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
   // Drag and drop state
   const [activeDragItem, setActiveDragItem] = useState(null)
 
+  // Allocation editor state
+  const [editingAllocation, setEditingAllocation] = useState(null) // { packageBid, package }
+
   useEffect(() => {
     if (projectId) {
       loadData()
@@ -229,7 +234,7 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
     }
 
     // Then, add package-level bids as virtual item bids
-    // For each package bid, distribute the amount across items in that package
+    // For each package bid, distribute the amount across items using stored allocations
     for (const pkgBid of approvedPackageBids) {
       const pkg = pkgBid.scope_package
       if (!pkg || !pkgBid.amount) continue
@@ -238,24 +243,48 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
       const packageItems = pkg.scope_package_items || []
       const itemCount = packageItems.length || 1
 
-      // Distribute package amount across items (evenly for now, or could be proportional)
-      const amountPerItem = pkgBid.amount / itemCount
+      // Get stored allocations
+      const divisionAllocations = pkgBid.division_allocations || {}
+      const itemAllocations = pkgBid.item_allocations || {}
 
       for (const pkgItem of packageItems) {
         const itemId = pkgItem.bid_item_id
         if (!itemId) continue
         if (!bidsByItem[itemId]) bidsByItem[itemId] = []
 
+        // Determine amount for this item using allocation priority:
+        // 1. Item-level allocation (most specific)
+        // 2. Division-level allocation (distributed evenly within division)
+        // 3. Even distribution across all items (fallback)
+        let amountForItem = pkgBid.amount / itemCount // default fallback
+
+        if (itemAllocations[itemId]?.amount) {
+          // Use specific item allocation
+          amountForItem = itemAllocations[itemId].amount
+        } else {
+          // Try to use division allocation
+          const bidItem = pkgItem.bid_item
+          const divCode = bidItem?.trade?.division_code
+          if (divCode && divisionAllocations[divCode]?.amount) {
+            // Count items in this division within the package
+            const itemsInDivision = packageItems.filter(pi =>
+              pi.bid_item?.trade?.division_code === divCode
+            ).length || 1
+            amountForItem = divisionAllocations[divCode].amount / itemsInDivision
+          }
+        }
+
         // Add as a virtual bid for this item
         bidsByItem[itemId].push({
           id: `pkg-${pkgBid.id}-${itemId}`,
-          amount: amountPerItem,
+          amount: amountForItem,
           subcontractor: pkgBid.subcontractor,
           isPackageBid: true,
           packageBidId: pkgBid.id,
           packageName: pkg.name,
           packageTotalAmount: pkgBid.amount,
-          itemsInPackage: itemCount
+          itemsInPackage: itemCount,
+          allocationMethod: pkgBid.allocation_method
         })
       }
     }
@@ -976,6 +1005,68 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
                             </div>
                           </div>
                         )}
+
+                        {/* Approved Package Bids with Allocation */}
+                        {(() => {
+                          const pkgBidsForPackage = packageBids.filter(pb => pb.scope_package?.id === pkg.id)
+                          if (pkgBidsForPackage.length === 0) return null
+                          return (
+                            <div className="p-4 border-t bg-green-50">
+                              <h4 className="text-sm font-medium text-green-800 mb-2 flex items-center gap-2">
+                                <Check className="w-4 h-4" />
+                                Approved Package Bids
+                              </h4>
+                              <div className="space-y-2">
+                                {pkgBidsForPackage.map(pkgBid => {
+                                  const divisionCount = Object.keys(pkgBid.division_allocations || {}).length
+                                  return (
+                                    <div key={pkgBid.id} className="bg-white rounded-lg p-3 border border-green-200">
+                                      <div className="flex items-center justify-between">
+                                        <div>
+                                          <span className="font-medium text-gray-900">
+                                            {pkgBid.subcontractor?.company_name}
+                                          </span>
+                                          <span className="text-green-700 font-semibold ml-3">
+                                            {formatCurrency(pkgBid.amount)}
+                                          </span>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
+                                            {pkgBid.allocation_method === 'ai_suggested' ? (
+                                              <span className="flex items-center gap-1">
+                                                <Sparkles className="w-3 h-3" /> AI Allocated
+                                              </span>
+                                            ) : pkgBid.allocation_method === 'manual' ? (
+                                              'Manual Allocation'
+                                            ) : (
+                                              'Even Distribution'
+                                            )}
+                                          </span>
+                                          <button
+                                            onClick={() => setEditingAllocation({ packageBid: pkgBid, package: pkg })}
+                                            className="flex items-center gap-1 px-2 py-1 text-sm text-indigo-600 hover:bg-indigo-50 rounded"
+                                          >
+                                            <Sliders className="w-4 h-4" />
+                                            Edit Allocation
+                                          </button>
+                                        </div>
+                                      </div>
+                                      {divisionCount > 0 && (
+                                        <div className="mt-2 flex flex-wrap gap-1">
+                                          {Object.entries(pkgBid.division_allocations || {}).map(([divCode, alloc]) => (
+                                            <span key={divCode} className="text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded">
+                                              Div {divCode}: {alloc.percent?.toFixed(1)}%
+                                            </span>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            </div>
+                          )
+                        })()}
                       </div>
                     )}
                   </DroppablePackageWrapper>
@@ -1212,7 +1303,14 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
                     <tbody>
                       {division.items.map(item => (
                         <tr key={item.id} className="border-b border-gray-100">
-                          <td className="py-2 pl-4 text-gray-700">• {item.description}</td>
+                          <td className="py-2 pl-4 text-gray-700">
+                            <span>• {item.description}</span>
+                            {item.isFromPackageBid && item.selectedBid?.packageName && (
+                              <span className="ml-2 text-xs text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">
+                                included in {item.selectedBid.packageName}
+                              </span>
+                            )}
+                          </td>
                           <td className="py-2 text-right text-gray-600 w-28">
                             {item.amount > 0 ? formatCurrency(item.amount) : '-'}
                           </td>
@@ -1330,6 +1428,17 @@ export default function ProjectBidViews({ projectId, project, bidItems = [], onR
           onClose={() => setEditingBidItem(null)}
           onMove={handleMoveBidItem}
           loading={itemActionLoading === editingBidItem.id}
+        />
+      )}
+
+      {/* Allocation Editor Modal */}
+      {editingAllocation && (
+        <AllocationEditorModal
+          packageBid={editingAllocation.packageBid}
+          pkg={editingAllocation.package}
+          bidItems={bidItems}
+          onClose={() => setEditingAllocation(null)}
+          onSave={() => { setEditingAllocation(null); loadData() }}
         />
       )}
     </div>
@@ -1597,6 +1706,352 @@ function MoveBidItemModal({ item, trades, onClose, onMove, loading }) {
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  )
+}
+
+function AllocationEditorModal({ packageBid, pkg, bidItems, onClose, onSave }) {
+  const [loading, setLoading] = useState(false)
+  const [regenerating, setRegenerating] = useState(false)
+  const [divisionAllocations, setDivisionAllocations] = useState(
+    packageBid.division_allocations || {}
+  )
+  const [itemAllocations, setItemAllocations] = useState(
+    packageBid.item_allocations || {}
+  )
+  const [allocationMethod, setAllocationMethod] = useState(
+    packageBid.allocation_method || 'even'
+  )
+
+  const totalAmount = packageBid.amount || 0
+
+  // Get package items with their division info
+  const packageItems = (pkg.scope_package_items || pkg.items || [])
+    .map(pi => {
+      const bidItem = bidItems.find(bi => bi.id === (pi.bid_item_id || pi.bid_item?.id))
+      return bidItem ? {
+        ...bidItem,
+        bidItemId: bidItem.id
+      } : null
+    })
+    .filter(Boolean)
+
+  // Group items by division
+  const itemsByDivision = packageItems.reduce((acc, item) => {
+    const divCode = item.trade?.division_code || '00'
+    const divName = item.trade?.name || 'Unknown'
+    if (!acc[divCode]) {
+      acc[divCode] = { code: divCode, name: divName, items: [] }
+    }
+    acc[divCode].items.push(item)
+    return acc
+  }, {})
+
+  const sortedDivisions = Object.keys(itemsByDivision).sort()
+
+  // Calculate current allocation totals
+  const currentDivisionTotal = Object.values(divisionAllocations)
+    .reduce((sum, alloc) => sum + (alloc.amount || 0), 0)
+
+  const allocationDifference = totalAmount - currentDivisionTotal
+
+  // Update division allocation (amount or percent)
+  function updateDivisionAllocation(divCode, field, value) {
+    setDivisionAllocations(prev => {
+      const updated = { ...prev }
+      if (!updated[divCode]) {
+        updated[divCode] = { percent: 0, amount: 0, reasoning: '' }
+      }
+
+      if (field === 'percent') {
+        const percent = Math.min(100, Math.max(0, Number(value) || 0))
+        updated[divCode] = {
+          ...updated[divCode],
+          percent,
+          amount: Math.round(totalAmount * (percent / 100))
+        }
+      } else if (field === 'amount') {
+        const amount = Math.max(0, Number(value) || 0)
+        updated[divCode] = {
+          ...updated[divCode],
+          amount,
+          percent: totalAmount > 0 ? Math.round((amount / totalAmount) * 1000) / 10 : 0
+        }
+      }
+
+      return updated
+    })
+    setAllocationMethod('manual')
+  }
+
+  // Update item-level allocation
+  function updateItemAllocation(itemId, amount) {
+    setItemAllocations(prev => ({
+      ...prev,
+      [itemId]: {
+        amount: Math.max(0, Number(amount) || 0),
+        reasoning: 'Manual adjustment'
+      }
+    }))
+    setAllocationMethod('manual')
+  }
+
+  // Distribute evenly
+  function distributeEvenly() {
+    const divCount = sortedDivisions.length
+    if (divCount === 0) return
+
+    const newAllocations = {}
+    const evenPercent = Math.round((100 / divCount) * 10) / 10
+    const evenAmount = Math.round(totalAmount / divCount)
+
+    sortedDivisions.forEach((divCode, idx) => {
+      // Last division gets remainder to ensure totals match
+      const isLast = idx === divCount - 1
+      const prevTotal = Object.values(newAllocations).reduce((s, a) => s + a.amount, 0)
+      newAllocations[divCode] = {
+        percent: isLast ? Math.round((100 - evenPercent * idx) * 10) / 10 : evenPercent,
+        amount: isLast ? totalAmount - prevTotal : evenAmount,
+        reasoning: 'Even distribution'
+      }
+    })
+
+    setDivisionAllocations(newAllocations)
+    setItemAllocations({})
+    setAllocationMethod('even')
+  }
+
+  // Request AI re-suggestion
+  async function regenerateWithAI() {
+    setRegenerating(true)
+    try {
+      const items = packageItems.map(item => ({
+        id: item.id,
+        description: item.description,
+        division_code: item.trade?.division_code,
+        division_name: item.trade?.name
+      }))
+
+      const response = await fetch('/.netlify/functions/suggest-bid-allocation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          totalAmount,
+          packageName: pkg.name,
+          items
+        })
+      })
+
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error || 'AI suggestion failed')
+
+      if (result.allocation) {
+        setDivisionAllocations(result.allocation.division_allocations || {})
+        setItemAllocations(result.allocation.item_allocations || {})
+        setAllocationMethod('ai_suggested')
+        toast.success('AI allocation generated')
+      }
+    } catch (error) {
+      console.error('AI allocation error:', error)
+      toast.error(error.message || 'Failed to generate AI allocation')
+    } finally {
+      setRegenerating(false)
+    }
+  }
+
+  // Save allocation
+  async function handleSave() {
+    setLoading(true)
+    try {
+      await updatePackageBidAllocation(
+        packageBid.id,
+        allocationMethod,
+        divisionAllocations,
+        itemAllocations
+      )
+      toast.success('Allocation saved')
+      onSave()
+    } catch (error) {
+      console.error('Save error:', error)
+      toast.error('Failed to save allocation')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl mx-4 max-h-[90vh] overflow-hidden flex flex-col">
+        <div className="p-4 border-b flex items-center justify-between bg-gradient-to-r from-indigo-600 to-indigo-700">
+          <div className="text-white">
+            <h2 className="text-lg font-semibold flex items-center gap-2">
+              <PieChart className="w-5 h-5" />
+              Edit Bid Allocation
+            </h2>
+            <p className="text-sm text-indigo-200">{pkg.name}</p>
+          </div>
+          <button onClick={onClose} className="p-2 text-white hover:bg-white/20 rounded">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Summary Header */}
+        <div className="p-4 bg-gray-50 border-b">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm text-gray-500">Package Total</div>
+              <div className="text-2xl font-bold text-gray-900">{formatCurrency(totalAmount)}</div>
+            </div>
+            <div className="text-right">
+              <div className="text-sm text-gray-500">Subcontractor</div>
+              <div className="font-medium text-gray-900">{packageBid.subcontractor?.company_name}</div>
+            </div>
+          </div>
+
+          {/* Allocation Actions */}
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              onClick={distributeEvenly}
+              className="px-3 py-1.5 text-sm bg-gray-200 hover:bg-gray-300 rounded flex items-center gap-1"
+            >
+              <Percent className="w-4 h-4" />
+              Even Distribution
+            </button>
+            <button
+              onClick={regenerateWithAI}
+              disabled={regenerating}
+              className="px-3 py-1.5 text-sm bg-indigo-100 text-indigo-700 hover:bg-indigo-200 rounded flex items-center gap-1 disabled:opacity-50"
+            >
+              {regenerating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+              {regenerating ? 'Generating...' : 'AI Suggest'}
+            </button>
+            <span className={`px-3 py-1.5 text-xs rounded ${
+              allocationMethod === 'ai_suggested' ? 'bg-purple-100 text-purple-700' :
+              allocationMethod === 'manual' ? 'bg-yellow-100 text-yellow-700' :
+              'bg-gray-100 text-gray-600'
+            }`}>
+              {allocationMethod === 'ai_suggested' ? 'AI Suggested' :
+               allocationMethod === 'manual' ? 'Manual' : 'Even'}
+            </span>
+          </div>
+
+          {/* Allocation Balance Warning */}
+          {Math.abs(allocationDifference) > 1 && (
+            <div className={`mt-3 p-2 rounded text-sm flex items-center gap-2 ${
+              allocationDifference > 0 ? 'bg-orange-100 text-orange-700' : 'bg-red-100 text-red-700'
+            }`}>
+              <AlertTriangle className="w-4 h-4" />
+              {allocationDifference > 0
+                ? `${formatCurrency(allocationDifference)} unallocated`
+                : `${formatCurrency(Math.abs(allocationDifference))} over-allocated`
+              }
+            </div>
+          )}
+        </div>
+
+        {/* Division Allocations */}
+        <div className="flex-1 overflow-y-auto p-4">
+          <h3 className="font-medium text-gray-900 mb-3">Division Allocations</h3>
+
+          <div className="space-y-4">
+            {sortedDivisions.map(divCode => {
+              const div = itemsByDivision[divCode]
+              const alloc = divisionAllocations[divCode] || { percent: 0, amount: 0 }
+
+              return (
+                <div key={divCode} className="border rounded-lg overflow-hidden">
+                  <div className="p-3 bg-gray-50 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-indigo-600">Div {divCode}</span>
+                      <span className="text-gray-700">{div.name}</span>
+                      <span className="text-xs text-gray-400">({div.items.length} items)</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          value={alloc.percent || ''}
+                          onChange={(e) => updateDivisionAllocation(divCode, 'percent', e.target.value)}
+                          className="w-16 text-right border rounded px-2 py-1 text-sm"
+                          placeholder="0"
+                          step="0.1"
+                        />
+                        <span className="text-gray-500">%</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className="text-gray-400">$</span>
+                        <input
+                          type="number"
+                          value={alloc.amount || ''}
+                          onChange={(e) => updateDivisionAllocation(divCode, 'amount', e.target.value)}
+                          className="w-24 text-right border rounded px-2 py-1 text-sm"
+                          placeholder="0"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Items within division */}
+                  <div className="divide-y">
+                    {div.items.map(item => {
+                      const itemAlloc = itemAllocations[item.id]
+                      const defaultAmount = alloc.amount && div.items.length > 0
+                        ? Math.round(alloc.amount / div.items.length)
+                        : 0
+
+                      return (
+                        <div key={item.id} className="p-3 flex items-center justify-between text-sm">
+                          <span className="text-gray-700">{item.description}</span>
+                          <div className="flex items-center gap-1">
+                            <span className="text-gray-400">$</span>
+                            <input
+                              type="number"
+                              value={itemAlloc?.amount ?? ''}
+                              onChange={(e) => updateItemAllocation(item.id, e.target.value)}
+                              className="w-20 text-right border rounded px-2 py-1 text-sm"
+                              placeholder={defaultAmount.toString()}
+                            />
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {alloc.reasoning && (
+                    <div className="px-3 py-2 bg-blue-50 text-xs text-blue-600 border-t">
+                      {alloc.reasoning}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="p-4 border-t flex items-center justify-between bg-gray-50">
+          <div className="text-sm text-gray-500">
+            Allocated: {formatCurrency(currentDivisionTotal)} of {formatCurrency(totalAmount)}
+          </div>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-gray-700 hover:bg-gray-200 rounded-lg"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={loading}
+              className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2"
+            >
+              {loading && <RefreshCw className="w-4 h-4 animate-spin" />}
+              {loading ? 'Saving...' : 'Save Allocation'}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   )
