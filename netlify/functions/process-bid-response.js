@@ -623,6 +623,90 @@ The Estimating Team
 }
 
 /**
+ * Call AI to suggest allocation for a package bid
+ */
+async function suggestBidAllocation(packageBid, packageItems, packageName) {
+  if (!anthropic || !packageItems?.length) return null
+
+  try {
+    // Build items list for AI
+    const items = packageItems.map(pi => ({
+      id: pi.bid_item?.id || pi.bid_item_id,
+      description: pi.bid_item?.description || 'Unknown item',
+      division_code: pi.bid_item?.trade?.division_code || '00',
+      division_name: pi.bid_item?.trade?.name || 'Unknown'
+    }))
+
+    // Group by division for the prompt
+    const itemsByDivision = {}
+    for (const item of items) {
+      if (!itemsByDivision[item.division_code]) {
+        itemsByDivision[item.division_code] = { name: item.division_name, items: [] }
+      }
+      itemsByDivision[item.division_code].items.push(item)
+    }
+
+    const itemsList = Object.entries(itemsByDivision).map(([code, div]) => {
+      const itemDescriptions = div.items.map(i => `  - ${i.id}: ${i.description}`).join('\n')
+      return `Division ${code} - ${div.name}:\n${itemDescriptions}`
+    }).join('\n\n')
+
+    const prompt = `Package: ${packageName}
+Total Bid Amount: $${packageBid.amount.toLocaleString()}
+
+Items by Division:
+${itemsList}
+
+Based on typical construction costs, suggest how to allocate $${packageBid.amount.toLocaleString()} across these divisions and items.
+
+Return JSON with this structure:
+{
+  "division_allocations": {
+    "DIVISION_CODE": { "percent": NUMBER, "amount": NUMBER }
+  },
+  "item_allocations": {
+    "ITEM_ID": { "amount": NUMBER }
+  }
+}
+
+Division amounts must sum to ${packageBid.amount}. Item amounts within each division must sum to that division's amount.`
+
+    const response = await anthropic.messages.create({
+      model: CLAUDE_MODEL,
+      max_tokens: 2000,
+      temperature: 0,
+      system: 'You are a construction cost estimation expert. Distribute bid amounts realistically based on typical costs. Return only valid JSON.',
+      messages: [{ role: 'user', content: prompt }]
+    })
+
+    const text = response.content[0]?.text || ''
+    const match = text.match(/\{[\s\S]*\}/)
+    if (!match) return null
+
+    const allocation = JSON.parse(match[0])
+
+    // Normalize amounts to sum correctly
+    const divAllocations = allocation.division_allocations || {}
+    const itemAllocations = allocation.item_allocations || {}
+
+    // Scale division amounts if needed
+    let divSum = Object.values(divAllocations).reduce((sum, d) => sum + (d.amount || 0), 0)
+    if (divSum > 0 && divSum !== packageBid.amount) {
+      const scale = packageBid.amount / divSum
+      for (const code of Object.keys(divAllocations)) {
+        divAllocations[code].amount = Math.round(divAllocations[code].amount * scale)
+        divAllocations[code].percent = Math.round((divAllocations[code].amount / packageBid.amount) * 1000) / 10
+      }
+    }
+
+    return { division_allocations: divAllocations, item_allocations: itemAllocations }
+  } catch (error) {
+    console.error('Error suggesting allocation:', error.message)
+    return null
+  }
+}
+
+/**
  * Save per-package bids from a clarification response to package_bids table
  */
 async function savePerPackageBids(context, parsedBid, bidResponseId = null) {
@@ -647,6 +731,18 @@ async function savePerPackageBids(context, parsedBid, bidResponseId = null) {
       console.log(`Package not found for: ${packageName}`)
       continue
     }
+
+    // Get package items with division info for allocation
+    const { data: packageItems } = await supabase
+      .from('scope_package_items')
+      .select(`
+        bid_item_id,
+        bid_item:bid_items (
+          id, description,
+          trade:trades (id, name, division_code)
+        )
+      `)
+      .eq('scope_package_id', pkg.id)
 
     // Create a package-level bid in the package_bids table
     const { data: packageBid, error } = await supabase
@@ -674,6 +770,55 @@ async function savePerPackageBids(context, parsedBid, bidResponseId = null) {
     } else {
       results.push({ package: packageName, package_bid_id: packageBid.id, amount })
       console.log(`Created package bid for ${packageName}: $${amount}`)
+
+      // Auto-suggest allocation if package has items in multiple divisions
+      if (packageItems && packageItems.length > 0) {
+        const divisionCodes = new Set(packageItems.map(pi => pi.bid_item?.trade?.division_code).filter(Boolean))
+
+        if (divisionCodes.size > 1) {
+          console.log(`Package "${packageName}" spans ${divisionCodes.size} divisions, suggesting allocation...`)
+          const allocation = await suggestBidAllocation(packageBid, packageItems, packageName)
+
+          if (allocation) {
+            // Save allocation to the package bid
+            await supabase
+              .from('package_bids')
+              .update({
+                allocation_method: 'ai_suggested',
+                division_allocations: allocation.division_allocations,
+                item_allocations: allocation.item_allocations
+              })
+              .eq('id', packageBid.id)
+
+            console.log(`Saved AI allocation for "${packageName}":`, Object.keys(allocation.division_allocations))
+            results[results.length - 1].allocation = allocation
+          }
+        } else {
+          // Single division - even allocation
+          const divCode = Array.from(divisionCodes)[0] || '00'
+          const evenAllocation = {
+            division_allocations: {
+              [divCode]: { percent: 100, amount: amount }
+            },
+            item_allocations: {}
+          }
+
+          // Distribute evenly among items
+          const perItem = Math.round(amount / packageItems.length)
+          for (const pi of packageItems) {
+            evenAllocation.item_allocations[pi.bid_item_id] = { amount: perItem }
+          }
+
+          await supabase
+            .from('package_bids')
+            .update({
+              allocation_method: 'even',
+              division_allocations: evenAllocation.division_allocations,
+              item_allocations: evenAllocation.item_allocations
+            })
+            .eq('id', packageBid.id)
+        }
+      }
     }
   }
 

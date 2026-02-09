@@ -541,6 +541,23 @@ export async function rejectPackageBid(id) {
   return updatePackageBid(id, { status: 'rejected' })
 }
 
+export async function updatePackageBidAllocation(id, allocationMethod, divisionAllocations, itemAllocations = {}) {
+  const { data, error } = await supabase
+    .from('package_bids')
+    .update({
+      allocation_method: allocationMethod,
+      division_allocations: divisionAllocations,
+      item_allocations: itemAllocations,
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', id)
+    .select()
+    .single()
+
+  if (error) throw error
+  return data
+}
+
 export async function fetchApprovedPackageBidsForProject(projectId) {
   const { data, error } = await supabase
     .from('package_bids')

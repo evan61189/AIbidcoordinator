@@ -54,10 +54,11 @@ GROUP BID ITEMS BY THESE SUBCONTRACTOR PACKAGES:
 === MEP (Mechanical/Electrical/Plumbing) ===
 26. PLUMBING (Division 22): fixtures, piping, water heaters, gas, PLUMBING PIPE INSULATION
 27. HVAC (Division 23): equipment, ductwork, controls, TAB, DUCT INSULATION, HVAC PIPE INSULATION
-28. ELECTRICAL (Division 26): power, wiring, lighting, panels (NOT low voltage, NOT fire alarm)
-29. LOW VOLTAGE (Division 27): data/voice cabling, AV, security rough-in (SEPARATE from electrical)
-30. FIRE ALARM (Division 28): alarm panels, detectors, notification devices (SEPARATE from electrical & sprinklers - NOT Division 21)
-31. FIRE PROTECTION (Division 21): sprinklers, standpipes, fire pump (SEPARATE from fire alarm - this is Division 21)
+28. ELECTRICAL (Division 26): power, wiring, lighting, panels (NOT low voltage, NOT fire alarm, NOT access controls)
+29. LOW VOLTAGE (Division 27): data/voice cabling, AV, security rough-in (SEPARATE from electrical, NOT access controls)
+30. ACCESS CONTROLS (Division 28): card readers, access control panels, electric door strikes, maglocks, mag locks, door access, key fob, proximity readers, intercoms, access control systems (SEPARATE from electrical and low voltage)
+31. FIRE ALARM (Division 28): alarm panels, smoke detectors, notification devices (SEPARATE from electrical & sprinklers & access controls - NOT Division 21)
+32. FIRE PROTECTION (Division 21): sprinklers, standpipes, fire pump (SEPARATE from fire alarm - this is Division 21)
 
 === INSULATION RULES (CRITICAL) ===
 - Wall insulation, batt insulation, building insulation → DRYWALL/ACOUSTICAL (drywall sub handles)
@@ -66,7 +67,8 @@ GROUP BID ITEMS BY THESE SUBCONTRACTOR PACKAGES:
 - Roof insulation → ROOFING
 
 CRITICAL RULES:
-- Electrical, Low Voltage, Fire Alarm, and Fire Protection must be 4 SEPARATE packages
+- Electrical, Low Voltage, Access Controls, Fire Alarm, and Fire Protection must be 5 SEPARATE packages
+- ACCESS CONTROLS (card readers, access panels, maglocks) is SEPARATE from Low Voltage and Electrical
 - FIRE ALARM is Division 28 - do NOT put it under Division 21
 - FIRE PROTECTION (sprinklers) is Division 21 - this is different from Fire Alarm
 - Insulation must be split by trade as noted above - do NOT group all insulation together
